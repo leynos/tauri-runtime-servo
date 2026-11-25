@@ -2,15 +2,21 @@
 
 **Status:** Proposed architecture; no implementation or compatibility claim.
 
-**Date:** 29 October 2026.
+**Source baseline:** 29 October 2026. **Design review:** 25 November 2026.
 
 **Audience:** Runtime implementers, application developers evaluating the\
 backend, and reviewers of the Servo and Tauri integration boundaries.
 
-**Download:**
-[Complete Markdown specification](https://chatgpt.com/library?file_id=libfile_de66df53c11c8191aa9e43c299dcc3b5\&account_id=personal)
-·
-[Design bundle with proposed Rust contracts and conformance manifest](https://chatgpt.com/library?file_id=libfile_cccafbee5c708191b46bb0bbe71675f8\&account_id=personal)
+Descriptions of existing behaviour refer to the dated source pins unless a
+later revision is named.
+
+The [terms of reference](terms-of-reference.md) define the product outcome. The
+[context](context.md)
+defines the vocabulary and the [roadmap](roadmap.md) sequences the evidence
+needed for delivery.
+
+The [design review](design-review.md) records the panel's verdict and the
+conditions for proceeding.
 
 ## Architectural decision
 
@@ -96,9 +102,18 @@ A successful runtime must:
 
 ## Velocetty as the reference application
 
+Velocetty is an in-house fork of Vercel Hyper for developers working with
+coding agents. Its product brief is “VSCode for terminals”. A developer may
+monitor several agent sessions while typing in another pane, switch between
+windows, and inspect earlier output. The runtime must keep input responsive and
+deliver events to the intended window under that workload. Velocetty owns the
+workspace experience, pane layout, and session semantics. Velocetty makes no
+backwards-compatibility promise for Hyper configurations or plugins. Product
+fixtures exercise the configuration and plugin contracts Velocetty publishes.
+
 Use Velocetty revision\
 `40949b2f4b266d8523d6ffe680f1dbc53ad9b541`, from 29 October 2026, as the\
-first application baseline. Its current implementation runs on Electron,\
+first application baseline. That revision runs on Electron,\
 React 19, Redux, and xterm 5.3.0. It already has a transport facade,\
 visible-pane WebGL allocation, Canvas fallback, and runtime telemetry.\
 The protobuf/WebSocket service, Rust PTY backend, and Tauri packaging are\
@@ -107,6 +122,13 @@ planned work. The frontend still contains Electron and Node dependencies.\
 [terminal implementation][terminal-implementation],
 [locked dependencies][locked-dependencies],\
 [roadmap](https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/docs/roadmap.md).
+
+At the November comparison revision, Velocetty's manifest declares Electron
+`^45.2.1`, xterm `^5.3.0`, and a `build:backend` script. The older fixture
+declares Electron `^44.4.1`. Keep the October lockfile for reproducible
+comparisons. Qualify a newer product revision with the same terminal workload
+and an end-to-end backend session before promoting it.
+[November Velocetty manifest][velocetty-november].
 
 The product's technical design specifies that both the local Tauri\
 frontend and remote browser frontend use the same protobuf/WebSocket\
@@ -420,7 +442,7 @@ Expose a configuration and selection type named\
 application shape is:
 
 ```rust
-// Proposed API shape; tauri-runtime-servo does not exist yet.
+// Proposed API shape; the repository currently contains a stub.
 tauri::Builder::default()
     .runtime(tauri_runtime_servo::Servo::default())
     .run(tauri::generate_context!())
@@ -439,7 +461,8 @@ Verso listener bookkeeping. `with_webview` receives a Servo-specific\
 wrapper on the owner thread. This wrapper is not a Wry object and need\
 not implement `Send`.
 
-Velocetty currently runs on Electron and does not supply an existing\
+The pinned Velocetty application runs on Electron and does not supply an
+existing\
 Tauri 2 compatibility obligation. Do not build a Tauri 2 adapter in the initial
 programme. If a consumer\
 requires one, add a distinct adapter over the same engine host and run a\
@@ -492,21 +515,34 @@ renamed fork whose internal dependencies survive by accident.
 
 ### Baseline and update policy
 
-Start from **Servo 0.7.0**, released on 5 October 2026, at commit
-`aac43a3f31a259f04a574f5ec4e959c943ad7cc7`. Maintain a small, reviewed patch
-queue for the embedding contracts this runtime requires. The comparison
-snapshot of Servo main is `69911d3671ff2c75fc0d12d2553718b16956a2b1`, dated
-29 October 2026. Pin the complete dependency graph and record the patches with
-the runtime release; do not follow a moving branch in application builds.
-[S1][s1], [S2][s2]
+Reproduce the October control with **Servo 0.7.0**, released on 5 October 2026,
+at commit `aac43a3f31a259f04a574f5ec4e959c943ad7cc7`. Maintain a small,
+reviewed patch queue for the embedding contracts this runtime requires. The
+comparison snapshot of Servo main is
+`69911d3671ff2c75fc0d12d2553718b16956a2b1`, dated 29 October 2026. Pin the
+complete dependency graph and record the patches with the runtime release; do
+not follow a moving branch in application builds. [S1][s1], [S2][s2]
+
+Servo published 0.8.0 after that baseline. At the first gate, compare its
+public embedding surface, compiler, patch burden, and native launch against the
+control. Record a maintainable patch target before committing to the host. Keep
+each result associated with the release actually tested.
+[Servo 0.8.0 release](https://github.com/servo/servo/releases/tag/v0.8.0).
 
 | Property                          | Inspected value                                         | Design consequence                                                 |
 | --------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
-| Release toolchain                 | Rust 1.97.1                                             | Use the release's pinned toolchain initially.                      |
+| Release toolchain                 | Rust 1.97.1                                             | Use as the upstream control build.                                 |
 | Main toolchain                    | Rust 1.99.1                                             | A main-branch improvement may also require a toolchain update.     |
 | Main manifest MSRV                | Rust 1.88.0                                             | Distinguish declared MSRV from the release build toolchain.        |
 | Main rendering dependencies       | Surfman 0.14.0; WebRender 0.70.1; raw-window-handle 0.6 | Integrate through raw handles and the public rendering contract.   |
 | Main shell/example window library | Winit 0.30.13                                           | This does not require the runtime to use Servo's shell event loop. |
+
+The runtime workspace requires its dated nightly and Polonius flags. Build
+Servo alone with its release compiler as a control. Then compile and launch the
+combined dependency graph with the workspace pin. Record both compiler versions
+and target triples. An incompatible pair blocks host qualification until a
+reviewed pin or patch passes the same comparison.
+[Workspace toolchain](../rust-toolchain.toml), [Polonius policy](polonius.md).
 
 The toolchain files and manifest establish these values. Core public method
 signatures in `servo.rs`, `webview_delegate.rs`, and `rendering_context.rs`
@@ -650,8 +686,10 @@ Additional baseline references: [main manifest][main-manifest],
 
 ## Component boundaries
 
-Start with three production crates and a test workspace. Keep components\
-as modules until an independently useful API justifies another crate.
+The table assigns responsibilities for the proposed runtime, engine host, and
+build companion. Start the host proof with private modules in the runtime
+crate. Split the host when an independent conformance executable needs it.
+Introduce the build companion when an installer needs its resource inventory.
 
 | Component                             | Owns                                                                                                                          | Must not own                                                        |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -660,7 +698,7 @@ as modules until an independently useful API justifies another crate.
 | `tauri-runtime-servo-build`           | Compatibility metadata, resource staging, native dependency inventory, packaging validation                                   | Unpinned downloads, application signing keys, runtime policy        |
 | Conformance applications and fixtures | Reproducible behavioural evidence and regression cases                                                                        | Production compatibility shims                                      |
 
-`servo-host` is a workspace-private crate initially. It may depend on\
+Keep `servo-host` workspace-private after extraction. It may depend on\
 explicit public graphics/windowing crates such as Surfman and\
 raw-window-handle, but only the `servo` facade may provide engine\
 objects. It must not import constellation, script, layout, or internal\
@@ -1157,6 +1195,15 @@ work rather than accumulating unbounded queues. Permit explicit app\
 configuration and test it. Do not impose a universal command-execution\
 timeout on legitimate long-running application work.
 
+The runtime owns aggregate admission for its command and resource paths across
+all windows. Charge queued and in-flight bytes until the final consumer
+releases them. Reserve scheduling capacity for cancellation, close, and engine
+progress even at the data limit. The terminal service owns a separate budget
+across its connections. Charge output against both session and service limits
+until the agreed acknowledgement. Exercise a stalled consumer and a second
+interactive window, then close both. Measure peak outstanding bytes, close
+latency, and recovery of credit before accepting defaults.
+
 ## Diagnostics and developer experience
 
 Expose engine and runtime versions, source revisions, patch-set identity,\
@@ -1226,6 +1273,14 @@ code signing, notarization, and the entitlements established by tested\
 builds. Do not copy Chromium's entitlement list without validating Servo's\
 requirements. Test installation and launch outside a developer checkout.
 
+Stage an update beside the last working bundle. Under the exclusive profile
+lock, check the stored format against the candidate manifest before the first
+write. If migration is required, checkpoint the profile and retain the matching
+old bundle until candidate launch and profile health checks succeed. On
+interruption, recover one compatible bundle/profile pair. Exercise interruption
+before and after the first migrated write and verify the previous user data on
+restart. Stop an incompatible downgrade before opening the profile for writes.
+
 Track Servo security updates independently of feature work. Keep engine\
 changes as a small, documented patch series with one purpose per patch\
 and upstream tracking where appropriate. Rebase through the conformance\
@@ -1234,12 +1289,17 @@ required embedding contracts match; do not freeze an obsolete engine\
 merely to avoid adapter maintenance.
 
 Servo's current contribution policy excludes LLM-generated code,\
-documentation, issues, and comments. Therefore upstream acceptance is a\
+documentation, issues, and comments, with an exception for minimized test
+cases. Therefore upstream acceptance is a\
 delivery dependency that cannot be satisfied by submitting this generated\
 design or generated patches. Arrange contributions that comply with the\
 project's policy, or explicitly fund and maintain a downstream patch\
-series. This affects the maintenance plan, not the feasibility of an\
-independent runtime.
+series. At df12 Productions, the sole human maintainer decides which patches to
+carry and whether to release the combined graph. The agent workshop can prepare
+and exercise the candidate. Rehearse one security update, time the rebase and
+conformance run, and demonstrate recovery of the previous compatible
+bundle/profile pair. Keep the profile experimental if that work lacks an owner
+or exceeds the release owner's agreed update window.
 [Servo contribution policy](https://book.servo.org/policy/ai-usage.html).
 
 ## Required engine and core work
@@ -1267,10 +1327,9 @@ prove them with concrete Tauri scenarios before generalizing their APIs.
 
 ## Contract adaptation notes
 
-**Status:** specification only. `proposed-contracts.rs` names intended seams;
-it does not reproduce existing public Servo or Tauri APIs, and it has not been
-compiled. The inspected Tauri baseline is commit
-`78f49ba3993fed5a1b921235c547731006ad2a74` on the v3 branch.
+The names below describe proposed interfaces. The pinned Tauri contract is
+commit `78f49ba3993fed5a1b921235c547731006ad2a74`. Qualification requires a
+compiled adapter and the behavioural evidence specified below.
 
 ### Trusted document identity
 
@@ -1360,9 +1419,10 @@ revision, runtime revision, build configuration, and target platform.
 Successful compilation establishes API compatibility only; it does not
 establish browser policy, native integration, or lifecycle correctness.
 
-The accompanying `conformance.toml` contains the normative checklist. The
-general runtime stages inherit their predecessors. Velocetty may establish a
-separately named verified subset after stages P and H plus every security,
+Use the criteria below to populate the first release evidence record in
+[roadmap task 1.1.3](roadmap.md#11-select-the-first-build-and-evidence-profile).
+The general runtime stages inherit their predecessors. Velocetty may establish
+a separately named verified subset after stages P and H plus every security,
 lifecycle, native, and transport case applicable to its declared surface; this
 does not claim complete stage A conformance. Conditional groups identify
 applicable exercises explicitly: JSON-only invoke and native-events-only
@@ -1618,6 +1678,13 @@ either fails, stop at the corresponding prototype.\
 Do not recover apparent compatibility by synthesizing origins, loosening\
 capabilities, or allowing results to follow an unrelated document.
 
+If engine or privilege qualification stalls, Velocetty can ship its
+browser-safe frontend and backend protocol on its existing Electron host while
+keeping the inert Servo harness. This preserves product delivery and provides a
+comparison workload. It retains Electron distribution costs and requires
+maintaining fixtures for both hosts. Reopen Servo promotion when the failed
+gate has reproducible evidence on the proposed shipping configuration.
+
 ## Open decisions and evidence required
 
 The architecture selects the boundaries above. Implementation must resolve\
@@ -1625,7 +1692,7 @@ the following choices with evidence rather than implicit fallbacks.
 
 | Decision                           | Initial position                                                                               | Evidence required to finalize it                                                                                       |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Exact Servo/Tauri/host release set | Servo 0.7.0 plus a small patch series; pinned Tauri 3 and `tauri-winit` sources                | Build and native launch on each claimed target; dependency and ABI reconciliation.                                     |
+| Exact Servo/Tauri/host release set | Servo 0.7.0 control, 0.8.0 comparison, pinned Tauri 3 and `tauri-winit` sources                | Build and native launch on each claimed target; dependency and ABI reconciliation.                                     |
 | Terminal graphics profile          | Explicit WebGL2 and IntersectionObserver settings; tested Canvas fallback                      | Locked xterm corpus, context-loss recovery, native input/accessibility, and measured resource budgets.                 |
 | Privilege API delivery             | Public engine bootstrap, source identity, exact-document delivery, and normal-policy resources | Agreed API shape or maintained downstream patch ownership; negative tests at each boundary.                            |
 | Product native-service subset      | Implement the operations selected by Velocetty's host ports                                    | Inventory every direct Electron/Node dependency and chosen Tauri plugin; reject undeclared requirements before launch. |
@@ -1639,12 +1706,30 @@ interface will be accepted unchanged.
 
 ## Validation status
 
-This proposal derives from current primary documentation and source\
-inspection at the cited revisions. The accompanying API sketch describes\
-proposed contracts; it is not a compiled implementation. The conformance\
-manifest describes acceptance work, not passed tests. No Servo/Tauri build,\
-application compatibility run, exploit demonstration, or performance\
-benchmark formed part of this design task.
+The November review checked source contracts at the October baselines. Tauri's
+runtime handle and dispatchers require `Send + Sync`, while its native webview
+type only requires `'static`. The native IPC handler receives a detached view
+and an HTTP request with a string body. Servo's public webview contains
+thread-local shared state and accepts JavaScript evaluation against a webview.
+These interfaces support owner-thread access through a dispatcher. Privileged
+completion still requires engine-side identification of the intended document
+when the operation executes. [Tauri runtime][pinned-runtime-contracts],
+[Tauri webview contract][tauri-webview-contract],
+[Servo webview][servo-webview].
+
+The pinned Velocetty package declares Electron and xterm version ranges. Its
+lockfile supplies the actual workload versions. The Verso manifest and fork pin
+establish historical integration precedent. Tauri's runtime guide describes
+custom-runtime packaging. These sources support the choice of fixtures and the
+need for a Servo-specific packaging inventory.
+[Velocetty manifest][package-manifest],
+[Velocetty lockfile][locked-dependencies], [Verso manifest][verso-manifest],
+[Tauri runtime guide][runtime-guide].
+
+The repository contains the runtime scaffold. Source inspection leaves the host
+build, two-window launch, document delivery, packaging, and terminal
+performance gates open. Each release claim needs a conformance result tied to
+the tested revisions and target.
 
 ## Glossary
 
@@ -1805,3 +1890,9 @@ this document are design decisions.
 [fetch-implementation]: https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/net/fetch/methods.rs
 [http-loader]: https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/net/http_loader.rs
 [manifest-detection]: https://github.com/tauri-apps/tauri/blob/78f49ba3993fed5a1b921235c547731006ad2a74/crates/tauri-cli/src/interface/rust/manifest.rs
+
+[tauri-webview-contract]: https://github.com/tauri-apps/tauri/blob/78f49ba3993fed5a1b921235c547731006ad2a74/crates/tauri-runtime/src/webview.rs
+[servo-webview]: https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/servo/webview.rs
+[verso-manifest]: https://github.com/versotile-org/tauri-runtime-verso/blob/dc1c1bfeadf65f3f4e38a4a3c6c960a70b749337/Cargo.toml
+
+[velocetty-november]: https://github.com/leynos/velocetty/blob/6078e4ee51f527d248c45bc967cf65b694d71e71/package.json

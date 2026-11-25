@@ -19,9 +19,18 @@ documentation set.
 
 ## Architecture
 
+- [Terms of reference](terms-of-reference.md) identifies the users, the
+  desktop workflows that matter to them, and the evidence needed to choose a
+  host for Velocetty.
+- [Project context](context.md) defines the terms shared by the application,
+  desktop runtime, and engine.
 - [Tauri Servo runtime design](tauri-runtime-servo-design.md) describes the
   proposed desktop runtime, the integration boundaries between Tauri and Servo,
   and the criteria for claiming platform support.
+- [Design review](design-review.md) records the evidence, risks, and conditions
+  for proceeding with the prototype.
+- [Delivery roadmap](roadmap.md) sequences the work from the first terminal
+  fixture to qualification on each supported desktop target.
 
 ## Rust reference material
 
