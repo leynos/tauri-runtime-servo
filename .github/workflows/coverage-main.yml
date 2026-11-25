@@ -55,7 +55,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@1123a35f1cc7810f65bfffa5ea4c8b981d6c0090
+        uses: leynos/shared-actions/.github/actions/setup-rust@b50fd9a2b2f2a096d64fe44593805dd2da7f9148
         with:
           rustflags: -Zpolonius=next
           install-mold: 'true'
@@ -87,7 +87,7 @@ jobs:
           echo "Coverage CFLAGS: -fuse-ld=lld"
           echo "Coverage LDFLAGS: -fuse-ld=lld"
       - name: Test and Measure Coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@1123a35f1cc7810f65bfffa5ea4c8b981d6c0090
+        uses: leynos/shared-actions/.github/actions/generate-coverage@b50fd9a2b2f2a096d64fe44593805dd2da7f9148
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
           RUSTFLAGS: -Zpolonius=next -C link-arg=-fuse-ld=lld
@@ -126,7 +126,7 @@ jobs:
       # non-empty `installer-checksum`.
       - name: Upload coverage data to CodeScene
         if: steps.codescene_token.outputs.available == 'true' && github.ref == 'refs/heads/main'
-        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@1123a35f1cc7810f65bfffa5ea4c8b981d6c0090
+        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@b50fd9a2b2f2a096d64fe44593805dd2da7f9148
         with:
           format: lcov
           mode: upload
