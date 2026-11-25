@@ -4,7 +4,7 @@
 # the development backend. `scripts/check-build-tools.sh` reads both the
 # channel and the component list from here rather than duplicating either.
 [toolchain]
-channel = "nightly-2026-11-19"
+channel = "nightly-2026-11-25"
 components = [
   "clippy",
   "llvm-tools-preview",
