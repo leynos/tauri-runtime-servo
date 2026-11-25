@@ -1,0 +1,40 @@
+# Repository-wide Cargo defaults for the development build standard.
+#
+# The parallel `rustc` frontend and, on Linux, the `mold` linker are the
+# defaults for every development, test, lint and typecheck build. Cargo
+# discovers this file, so a bare `cargo build` gets them too.
+#
+# Cargo selects one `rustflags` source rather than merging sources: a matching
+# `[target.*]` table replaces `[build] rustflags`, and an assigned `RUSTFLAGS`
+# environment variable replaces both. Every flag is therefore repeated in each
+# source here, and the Makefile composes the same flags into the `RUSTFLAGS`
+# its recipes set. Coverage, the Whitaker lint route and the release recipe
+# assign `RUSTFLAGS` without the development flags on purpose.
+#
+# Cranelift is selected through rustc's nightly flag rather than the unstable
+# Cargo `[profile.dev] codegen-backend` key. Stable Cargo cannot parse that
+# key, and a release build must parse this file; the rustflags route lets the
+# stable release recipe clear `RUSTFLAGS` and drop the nightly flags instead.
+[build]
+rustflags = ["-Zpolonius=next", "-Zthreads=8", "-Zcodegen-backend=cranelift"]
+rustdocflags = ["-Zpolonius=next"]
+
+# `mold` ships for Linux only, and the `cfg` table matches every Linux target
+# rather than the requested development triple alone. The linker selection and
+# the mold flag therefore live together: a target that receives the flag also
+# selects the driver that accepts it. GCC before 12.1 rejects `-fuse-ld=mold`,
+# so leaving the platform driver in place would fail a bare `cargo build` on a
+# native AArch64 Linux host. Other targets, macOS and Windows included, keep
+# their platform linker.
+#
+# The `cfg` table replaces `[build] rustflags` whenever it matches, so it must
+# repeat every development flag as well as the linker selection.
+[target.'cfg(target_os = "linux")']
+linker = "clang"
+rustflags = ["-Zpolonius=next", "-Zthreads=8", "-Zcodegen-backend=cranelift", "-Clink-arg=-fuse-ld=mold"]
+
+# Cargo coordinates metadata output itself on dated nightlies from 2026-07-31.
+# A generated project pinning an older nightly omits this table. Never use raw
+# rustc metadata flags; they broke build scripts.
+[unstable]
+embed-metadata = false

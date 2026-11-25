@@ -1,0 +1,235 @@
+# User Guide
+
+This guide explains how to use the generated project after rendering it from
+the template.
+
+## First Steps After Rendering
+
+Initialize version control and stage the rendered files before running any gate:
+
+```sh
+git init
+git add -A
+make all
+```
+
+The spelling gate enumerates its inputs with `git ls-files`, so `make all`,
+`make markdownlint` and `make spelling` have nothing to check until the project
+is a Git repository with its files staged.
+
+## Generated Tooling
+
+Generated projects use Rust 2024, a pinned nightly toolchain, strict lint
+settings, and documented starter code. Library projects render `src/lib.rs`.
+Application projects render `src/main.rs`, `src/lib.rs`, release automation, and
+`[package.metadata.binstall]` metadata for binary installation.
+
+This project enables the Polonius alpha borrow checker (`-Zpolonius=next`) on
+its dated nightly toolchain. The checked-in Cargo configuration supplies the
+flag to normal builds and editor tooling, while the Makefile and workflows
+re-state it wherever they override `RUSTFLAGS`. See the
+[Polonius policy](polonius.md) before changing the toolchain or borrow-centric
+APIs.
+
+Development builds use Cranelift for debug code generation. On Linux targets,
+`.cargo/config.toml` configures clang to link with `mold` so local debug builds
+link quickly. Coverage generation uses `lld` instead because LLVM coverage
+tools expect LLVM-compatible linker behaviour.
+
+Rendered CI installs `rust-analyzer` with `rustup component add rust-analyzer`
+after the pinned toolchain is available, so editors and analysis tools use the
+same compiler as the build. It installs Whitaker through the shared
+`leynos/shared-actions` `install-whitaker` action rather than a project-local
+cache or installer script, so remove any local Whitaker installation left from
+an earlier render.
+
+Rendered `ci.yml` cancels superseded pull-request runs. Its workflow-level
+concurrency group is keyed on the workflow and the pull-request number, falling
+back to the ref, and `cancel-in-progress` applies only to `pull_request`
+events. A new push to a pull request therefore cancels the run for the previous
+head, while a dispatch is never cancelled while it runs. Dispatches on the same
+ref still share a group, so a newer dispatch can replace an older pending one.
+
+## Validation and Environment Policy
+
+This project denies `unknown_lints`, `renamed_and_removed_lints`,
+`unsafe_code`, and `missing_docs`. Rustdoc denies `missing_crate_level_docs`,
+`broken_intra_doc_links`, `private_intra_doc_links`, `bare_urls`,
+`invalid_html_tags`, `invalid_codeblock_attributes`, and `unescaped_backticks`.
+Clippy denies `missing_assert_message` and uses `disallowed_methods` to reject
+direct calls to process-environment readers, iterators, and mutation functions.
+Warnings are validation failures; these policies are not advisory.
+
+Code that depends on environment variables must receive `mockable::Env` (or a
+narrow equivalent closure) as a dependency. The production composition root
+constructs `mockable::DefaultEnv`, while tests use `mockable::MockEnv`.
+In-process tests must not mutate the process environment or serialize mutation
+behind `Mutex`, `OnceLock`, or `serial_test`. The only mutation exception is an
+end-to-end test using `assert_cmd`: `Command::env` and `Command::env_clear`
+configure the isolated child process, not the test harness.
+
+`make lint` builds documentation with Rustdoc warnings denied before running
+Clippy and Whitaker. `make test` exports warning-denial flags to the selected
+test runner and separately runs all-feature workspace doctests with Rustdoc
+warnings denied. A warning from normal tests, the documentation build, or a
+doctest therefore fails the command.
+
+### Migrate an Existing Project
+
+1. Copy the current `[lints.clippy]`, `[lints.rust]`, and `[lints.rustdoc]`
+   policy into each package manifest, or opt every workspace member into
+   equivalent workspace lints.
+2. Add the current `disallowed-methods` entries to the workspace-root
+   `clippy.toml`.
+3. Update the Makefile so `make lint` passes mandatory `RUSTDOCFLAGS` to
+   `cargo doc` and `make test` passes them to workspace doctests. Preserve
+   mandatory flags when appending inherited flags.
+4. Declare the current `mockable` dependency, refactor direct `std::env` reads
+   behind an injected `mockable::Env`, and replace in-process environment
+   mutation with `mockable::MockEnv`. Wire the environment adapter at the
+   composition root and construct `mockable::DefaultEnv` only in production.
+5. Update contributor guidance in `AGENTS.md` to document the injection
+   boundary and the `assert_cmd` child-process exception.
+6. Add diagnostic messages to assertions and crate/module/public-item
+   documentation where the denied lints require it.
+7. Run `make check-fmt`, `make lint`, `make typecheck`, and `make test`. Fix
+   every warning rather than suppressing or downgrading it.
+
+## Makefile Targets
+
+The generated `Makefile` exposes these public targets:
+
+- `make all` runs formatting checks, linting, tests, compile-time contract
+  tests, and workflow contracts, then runs spelling last, after those
+  prerequisites.
+- `make check-fmt` verifies Rust formatting and Markdown table formatting.
+- `make fmt` formats Rust and Markdown sources.
+- `make lint` runs the strict YAML, GitHub Actions, and shell gates, then
+  builds documentation and runs Clippy and Whitaker, with every warning denied.
+- `make lint-yaml` checks every tracked YAML file with strict yamllint.
+- `make lint-actions` runs actionlint, including shellcheck, over rendered
+  workflows.
+- `make lint-shell` runs shellcheck over tracked scripts.
+- `make typecheck` type-checks the workspace without building.
+- `make test` runs `cargo nextest run` when cargo-nextest is installed and
+  falls back to `cargo test` otherwise. It denies warnings in normal tests and
+  in the separate all-feature workspace doctest run. `.config/nextest.toml`
+  bounds each test and the whole run, and serializes compiler-spawning tests.
+  With nextest and compile-time contract targets, the default run leaves them
+  to the UI lane; the `cargo test` fallback has no filter syntax and runs them
+  as ordinary tests.
+- `make test-ui` runs compile-time contract targets named
+  `tests/compile_*.rs`, or reports an intentional no-op when there are none.
+  With nextest, `make test` and `make coverage` exclude those targets when they
+  exist, and `make all` runs this lane, so the comprehensive gate still covers
+  them. The hosted coverage job deselects them in the project's nextest profile
+  after the UI lane, so their nested Cargo builds are never instrumented and
+  their `[[test]]` declarations keep pointing at existing files.
+- `make test-workflow-contracts` runs the pinned shared CV-005 checker over the
+  repository, using the selection in `.github/cv005.toml`.
+- `make install-build-tools` installs the pinned `mold` release, verified
+  against `tools/mold/SHA256SUMS`, and the Cranelift component for the pinned
+  nightly. `make install-cranelift` installs only the component.
+- `make check-build-tools`, `make check-rust-toolchain`, and
+  `make check-coverage-tools` report missing tools and never install anything.
+- `make build` builds the debug target.
+- `make release` builds the release target.
+- `make coverage` writes `lcov.info` using `cargo llvm-cov` and `lld`.
+- `make audit` derives the Rust workspace root with `cargo metadata` and runs
+  `cargo audit` once from that root. In PR CI, Dependabot runs skip
+  `make audit` and the audit-only setup when `github.actor` is
+  `dependabot[bot]`, so whole-lockfile advisories do not block unrelated
+  dependency updates. Human PRs still retain the audit gate, and
+  `.github/workflows/audit.yml` runs weekly and can also be triggered manually
+  as the compensating control.
+- `make markdownlint` checks Markdown files and enforces en-GB-oxendict
+  spelling.
+- `make spelling` runs the shared `typos-config-builder` gate. It regenerates
+  `typos.toml` from the live shared dictionary and the `typos.local.toml`
+  overlay, then checks Markdown prose, so `typos.toml` is never drift checked
+  in CI. The gate enumerates its inputs with `git ls-files`, so the project
+  must be a Git repository with its files staged; `make spelling` fails with
+  that instruction when it is not. The first run writes `typos.toml`, which is
+  generated but tracked output: commit it alongside the rest of the project.
+- `make nixie` validates Mermaid diagrams.
+
+Install `clang`, `lld`, `mold`, `python3`, and `cargo-audit` before running the
+full generated workflow locally on Linux.
+
+### CodeScene coverage
+
+`.github/workflows/coverage-main.yml` is the project's only CodeScene caller.
+Its upload job runs in the `codescene` environment, and the upload step is
+guarded on `main` so a branch dispatch skips it. After rendering, restrict the
+`codescene` environment to the `main` branch under **Settings → Environments**.
+GitHub then refuses a dispatch of this workflow from any other branch before
+the job starts, which keeps the environment and its stored token out of reach
+of a modified branch workflow. The template cannot create that protection rule,
+so the repository setting is part of onboarding to CodeScene.
+
+A merge made with `GITHUB_TOKEN`, including a Dependabot auto-merge, fires no
+push-event workflow. The automerge caller therefore dispatches
+`coverage-main.yml` once its pull request is merged into `main`, and
+`.github/workflows/coverage-backstop.yml` dispatches it daily for any merge
+path that still skips that job. The shared publisher contract permits only push
+and workflow_dispatch on the CodeScene publisher, so the schedule lives in the
+backstop workflow rather than in `coverage-main.yml`.
+
+## Dependency Updates
+
+`.github/dependabot.yml` checks GitHub Actions, Cargo dependencies, and the
+pinned `rust-toolchain` file daily. It groups shared-action callers into one
+pull request, routine GitHub Action minor and patch updates into another, and
+Cargo and toolchain minor and patch updates into further pull requests; a Cargo
+major update stays on its own pull request. Fresh releases cool down for seven
+days and Cargo major updates for fourteen, so a withdrawn or broken release is
+not adopted immediately. No `labels` list is configured, so Dependabot applies
+its default `dependencies` and ecosystem labels.
+
+## Delayed Pull Request Comment
+
+`.github/workflows/delayed-pr-comment.yml` posts one comment on a pull request
+after a requested delay. It runs only on manual dispatch and takes three inputs:
+`pr_number`, the pull request to comment on; `delay_minutes`, a whole number
+of minutes capped at 345; and `message`, the comment body.
+
+The job calls the shared reusable workflow in `leynos/shared-actions`, pinned
+to a full commit SHA, and asks for only `pull-requests: write`. That workflow
+validates both numbers as digits only, caps the delay at 345 minutes, bounds
+the job just under GitHub's 360-minute limit so a valid delay is never
+cancelled, and posts the comment verbatim with `gh`. Every input is untrusted,
+so each one reaches the shell only through the environment, never through an
+expression in a script.
+
+## Scheduled Mutation Testing
+
+Generated projects include `.github/workflows/mutation-testing.yml`, a
+scheduled GitHub Actions workflow that runs mutation testing with
+`cargo-mutants`. It is a thin caller of the shared `leynos/shared-actions`
+`mutation-cargo` reusable workflow.
+
+Mutation testing measures test-suite quality. It introduces small changes
+(mutants) into the source and confirms the tests fail in response. A surviving
+mutant marks a code path the tests do not meaningfully exercise, so promote it
+into a new test rather than ignoring it.
+
+The workflow runs on a daily schedule (09:15 UTC by default) and can also be
+started manually from the **Actions** tab with **Run workflow**. Scheduled runs
+mutate only files changed within the detection window, so routine runs stay
+fast; a manual dispatch mutates the whole crate, fanned out across shards.
+Because the runs are scheduled rather than gating pull requests, they surface
+coverage gaps without slowing day-to-day CI, and they do not block merges.
+
+When adopting the workflow in a new repository, stagger the cron slot: pick an
+unclaimed daily time to avoid concurrent runs across related repositories. The
+`mutation` job runs with a least-privilege token (`contents: read` plus
+`id-token: write` for workflow-source resolution).
+
+Results land in the run's job summary: a final job posts per-target outcome
+counts and a table of surviving mutants, and each shard uploads its
+`mutants.out/` directory as a `mutation-report-*` artefact. When nothing
+relevant changed, the run writes a skip message and finishes in seconds.
+Surviving mutants and timeouts are informational and leave the run green, so a
+red run means something actually broke — a usage error, an already-failing test
+baseline, or an internal error. Watch for those through GitHub's notifications
+for failed scheduled runs.

@@ -1,0 +1,138 @@
+name: CI
+
+'on':
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+# A push to a pull request supersedes the run already in flight, and there is
+# nothing left to learn from the superseded one. Cancellation is conditioned
+# on the event, so a dispatch is never cancelled while it runs. A run without
+# a pull request number groups by its run ID: a shared group would let GitHub
+# replace an older pending dispatch with a newer one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CARGO_TERM_COLOR: always
+      BUILD_PROFILE: debug
+    steps:
+      - uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: leynos/shared-actions/.github/actions/setup-rust@1123a35f1cc7810f65bfffa5ea4c8b981d6c0090
+        with:
+          rustflags: -Zpolonius=next
+          # mold accelerates dev builds; coverage uses lld for llvm-tools compatibility.
+          install-mold: 'true'
+          install-clang-lld: 'true'
+      - name: Log Rust compiler configuration
+        run: |-
+          rustc --version
+          printf 'Base RUSTFLAGS: %s\n' "$RUSTFLAGS"
+      # setup-rust installs rustfmt, clippy and llvm-tools-preview; the
+      # editor and analysis integrations need rust-analyzer separately.
+      - name: Install rust-analyzer
+        run: rustup component add rust-analyzer
+      - name: Install mdtablefix
+        # `make check-fmt` runs `mdtablefix --check --git`.
+        uses: leynos/shared-actions/.github/actions/install-mdtablefix@0eabb6bc07148981de5da395e30cd78d83f5c7c2
+        with:
+          version: "0.6.1"
+      - name: Format
+        run: make check-fmt
+      - name: Markdown lint
+        uses: DavidAnson/markdownlint-cli2-action@2df9e28eb87988518ef3880c34edad45d65b1668
+        with:
+          globs: |
+            **/*.md
+            !**/target/**
+            !**/dist/**
+      - name: Setup uv
+        uses: astral-sh/setup-uv@12d13f90bc3a5a1971bebad4beb09a4dfa962e91
+      - name: Install the YAML lint tools
+        uses: leynos/shared-actions/.github/actions/install-yaml-lint@26c918632c5413039a84358fafe012a4399a9ec7
+      # The checker is the shared CV-005 rules, pinned in the Makefile; it
+      # proves the pull-request lane never reaches CodeScene and that only the
+      # publisher uploads and advances the ratchet baseline.
+      - name: Check the CV-005 workflow contracts
+        run: make test-workflow-contracts
+      - name: Check spelling
+        run: make spelling
+      - name: Install test runner
+        env:
+          RUSTFLAGS: ""
+        run: cargo binstall --no-confirm --locked cargo-nextest
+      # Dependency audits report advisories against the whole lockfile, so a
+      # newly published advisory would fail every Dependabot PR regardless of
+      # content and deadlock auto-merge. The scheduled audit workflow covers
+      # Dependabot merges instead.
+      - name: Install cargo-audit
+        if: github.actor != 'dependabot[bot]'
+        env:
+          RUSTFLAGS: ""
+        run: cargo binstall --no-confirm cargo-audit
+      - name: Setup Python for audit manifest extraction
+        if: github.actor != 'dependabot[bot]'
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.x'
+      # The shared action owns the installer version, its archive checksums,
+      # the bootstrap cache and the no-source-fallback policy. Cranelift is
+      # installed because development builds select that codegen backend.
+      - name: Install Whitaker
+        uses: leynos/shared-actions/.github/actions/install-whitaker@0eabb6bc07148981de5da395e30cd78d83f5c7c2
+        with:
+          cranelift: 'true'
+      - name: Audit dependencies
+        if: github.actor != 'dependabot[bot]'
+        run: make audit
+      - name: Lint
+        run: make lint
+      # Compile-time contract tests run before coverage so their nested Cargo
+      # invocations are not instrumented and do not compete for the cache.
+      - name: Run compile-time UI tests
+        run: make test-ui
+      # The UI lane above already ran the compile-time targets. The shared
+      # coverage action exposes no test filter and always runs workspace
+      # nextest, so the instrumented build deselects them in the project's own
+      # nextest profile: a nested Cargo project gains no coverage and would run
+      # outside the serialized group. `make test` and `make coverage` pass the
+      # equivalent `-E` filter. The targets stay in the crate, so an explicit
+      # `[[test]]` declaration keeps pointing at an existing file.
+      - name: Exclude compile-time targets from the coverage build
+        run: scripts/exclude-ui-targets.sh
+      - name: Log coverage linker configuration
+        run: |
+          echo "Coverage linker: clang"
+          echo "Coverage RUSTFLAGS: -Zpolonius=next -C link-arg=-fuse-ld=lld"
+          echo "Coverage CFLAGS: -fuse-ld=lld"
+          echo "Coverage LDFLAGS: -fuse-ld=lld"
+      - name: Test and Measure Coverage
+        uses: leynos/shared-actions/.github/actions/generate-coverage@1123a35f1cc7810f65bfffa5ea4c8b981d6c0090
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          RUSTFLAGS: -Zpolonius=next -C link-arg=-fuse-ld=lld
+          # The doctest run reads RUSTDOCFLAGS, as `make test` sets it.
+          RUSTDOCFLAGS: --cfg docsrs -D warnings -Zpolonius=next
+          CFLAGS: -fuse-ld=lld
+          LDFLAGS: -fuse-ld=lld
+        with:
+          output-path: lcov.info
+          format: lcov
+          with-ratchet: 'true'
+          # The publisher in coverage-main.yml owns the coverage artefact and
+          # the ratchet baseline; this lane only compares against it.
+          publish-artefact: 'false'
+          # Match `make test`'s scope (all targets, all features, doctests):
+          # this job is the pull request's only test execution in CI.
+          all-targets: 'true'
+          all-features: 'true'
+          doctests: 'true'

@@ -1,0 +1,252 @@
+.PHONY: help all clean test test-ui build release coverage lint lint-actions lint-shell lint-yaml fmt check-fmt markdownlint spelling test-workflow-contracts nixie audit rust-audit install-build-tools install-cranelift check-build-tools check-rust-toolchain check-coverage-tools
+
+SHELL := bash
+
+
+TARGET ?= libtauri_runtime_servo.rlib
+
+USER_WHITAKER := $(HOME)/.local/bin/whitaker
+USER_BIN_PATH := $(HOME)/.cargo/bin:$(HOME)/.local/bin:$(HOME)/.bun/bin
+CARGO ?= cargo
+BUILD_JOBS ?=
+BUILD_TOOLS_PREFIX ?= $(HOME)/.local
+BUILD_TOOLS_PATH = $(BUILD_TOOLS_PREFIX)/bin:$$PATH
+# Capability checks report what the machine has; they never install anything.
+# Each is overridable so a caller with an equivalent environment can replace it
+# without editing the target graph.
+CHECK_BUILD_TOOLS ?= PATH="$(BUILD_TOOLS_PATH)" scripts/check-build-tools.sh
+CHECK_RUST_TOOLCHAIN ?= PATH="$(BUILD_TOOLS_PATH)" scripts/check-build-tools.sh --toolchain-only
+CHECK_COVERAGE_TOOLS ?= PATH="$(BUILD_TOOLS_PATH)" scripts/check-build-tools.sh --coverage-only
+# RUSTFLAGS overrides .cargo/config.toml, so recipes that set it must re-state
+# the Polonius flag explicitly.
+POLONIUS_FLAGS ?= -Zpolonius=next
+# RUSTFLAGS inherited from the environment is appended: assigning RUSTFLAGS in
+# a recipe replaces both the environment value and the flags Cargo would read
+# from .cargo/config.toml.
+INHERITED_RUST_FLAGS := $(RUSTFLAGS)
+RUST_FLAGS ?=
+RUST_FLAGS := $(INHERITED_RUST_FLAGS) -D warnings $(RUST_FLAGS)
+DEV_LINKER_FLAGS ?= $(if $(filter Linux,$(shell uname -s)),-C link-arg=-fuse-ld=mold)
+# Development builds use Cranelift through rustc's nightly flag and run the
+# compiler frontend on eight threads. Coverage, Whitaker and release omit both:
+# instrumented coverage and release linking must keep the platform codegen.
+DEV_CODEGEN_FLAGS ?= -Zthreads=8 -Zcodegen-backend=cranelift
+DEV_RUST_FLAGS ?= $(RUST_FLAGS) $(POLONIUS_FLAGS) $(DEV_CODEGEN_FLAGS) $(DEV_LINKER_FLAGS)
+WHITAKER_RUST_FLAGS ?= $(RUST_FLAGS) $(POLONIUS_FLAGS)
+RELEASE_RUST_FLAGS ?= $(POLONIUS_FLAGS)
+RELEASE_CARGO ?= $(CARGO)
+RUSTDOC_FLAGS ?=
+RUSTDOC_FLAGS := --cfg docsrs -D warnings $(POLONIUS_FLAGS) $(RUSTDOC_FLAGS)
+CARGO_FLAGS ?= --all-targets --all-features
+CLIPPY_FLAGS ?= $(CARGO_FLAGS) -- $(RUST_FLAGS)
+TEST_FLAGS ?= $(CARGO_FLAGS)
+# Selecting the runner must not provision anything: rustup installs a missing
+# pinned toolchain on demand, so the probe disables that, exactly as the
+# read-only capability checks do. Only the explicit installer targets install.
+TEST_CMD := $(if $(shell RUSTUP_AUTO_INSTALL=0 $(CARGO) nextest --version 2>/dev/null),nextest run,test)
+# `cargo test` has no profiles. Under nextest, the `ui` profile carries the
+# serialized `nested-cargo` group and the longer compile-test timeout.
+UI_TEST_CMD := $(if $(filter nextest run,$(TEST_CMD)),$(TEST_CMD) --profile ui,$(TEST_CMD))
+# The UI lane selects its targets by name, so `--all-targets` would reintroduce
+# the ordinary tests it is separated from. It still needs the same feature
+# selection as `make test`: a contract fixture may use a non-default feature.
+UI_TEST_FLAGS ?= --all-features
+COVERAGE_LINKER_FLAGS ?= -fuse-ld=lld
+COVERAGE_RUST_FLAGS ?= $(RUST_FLAGS) $(POLONIUS_FLAGS) -C link-arg=$(COVERAGE_LINKER_FLAGS)
+MDLINT ?= markdownlint-cli2
+# `make fmt` and `make check-fmt` call mdtablefix directly. `--git` selects the
+# Markdown files Git tracks and `--include-untracked` adds the untracked files
+# Git does not ignore, so a new document is formatted before it is staged.
+# Both modes need mdtablefix 0.6.0 or later; CI pins the version at the
+# install-mdtablefix step.
+MDTABLEFIX ?= mdtablefix
+MDTABLEFIX_SELECT = --git --include-untracked
+MDTABLEFIX_RULES = --wrap --renumber --breaks --ellipsis --fences
+# Compile-time contract tests are named `tests/compile_*.rs`. The convention
+# lets the explicit UI lane select them without a declared manifest, and an
+# empty selection is an intentional no-op rather than a failure.
+UI_TEST_TARGETS := $(patsubst tests/%.rs,%,$(wildcard tests/compile_*.rs))
+# `make test` owns every test except the compile-time contract targets: those
+# build nested Cargo projects, so `test-ui` runs them alone with the serialized
+# profile. nextest rejects a binary filter that names no binary, so the
+# exclusion is added only when a target was discovered; the `cargo test`
+# fallback cannot express it and runs them as ordinary tests.
+TEST_UI_EXCLUDE := $(if $(filter nextest run,$(TEST_CMD)),$(if $(strip $(UI_TEST_TARGETS)),-E 'not binary(compile_*)'))
+# Coverage makes the same split through the same filter. The shared CI
+# coverage action exposes no test filter and always runs workspace nextest, so
+# its caller deselects the targets in the project's nextest profile with
+# `scripts/exclude-ui-targets.sh`; the targets stay in the crate.
+COVERAGE_NEXTEST := $(if $(filter nextest run,$(TEST_CMD)),nextest)
+NIXIE ?= nixie
+# YAML, workflow and shell lint tools are provisioned by the shared
+# install-yaml-lint action in CI and may come from any package manager
+# locally. Each target names the missing tool and how to install it.
+YAMLLINT ?= yamllint
+ACTIONLINT ?= actionlint
+SHELLCHECK ?= shellcheck
+TYPOS_CONFIG_BUILDER_VERSION ?= v0.1.3
+TYPOS_CONFIG_BUILDER = uv tool run --python 3.14 --from \
+	"git+https://github.com/leynos/typos-config-builder.git@$(TYPOS_CONFIG_BUILDER_VERSION)" \
+	typos-config-builder
+WHITAKER ?= $(or $(shell command -v whitaker 2>/dev/null),$(wildcard $(USER_WHITAKER)),whitaker)
+UV ?= uv
+# The shared CV-005 checker is pinned by one revision, so a rule fix is a pin
+# bump and the generated project never carries its own copy of the rules.
+CV005_CONTRACTS_REF ?= 38905b4b2caec5b049438e6dc3f3f6b36c04d2df
+CV005_CONTRACTS = $(UV) tool run --python 3.13 \
+	--from 'git+https://github.com/leynos/shared-actions@$(CV005_CONTRACTS_REF)\#subdirectory=packages/cv005-contracts' \
+	cv005-contracts
+
+build: target/debug/$(TARGET) ## Build debug binary
+release: check-rust-toolchain target/release/$(TARGET) ## Build release binary
+
+all: check-fmt lint test test-ui test-workflow-contracts ## Perform a comprehensive check of code
+	+$(MAKE) spelling
+
+install-build-tools: ## Install the pinned Rust toolchain and mold linker
+	BUILD_TOOLS_PREFIX="$(BUILD_TOOLS_PREFIX)" scripts/install-build-tools.sh
+
+install-cranelift: ## Install the Cranelift backend for the pinned toolchain
+	scripts/install-build-tools.sh --cranelift-only
+
+check-build-tools: ## Check the pinned toolchain, clang and mold
+	@$(CHECK_BUILD_TOOLS)
+
+check-rust-toolchain: ## Check the pinned Rust toolchain and components
+	@$(CHECK_RUST_TOOLCHAIN)
+
+check-coverage-tools: ## Check the clang and lld linkers used for coverage
+	@$(CHECK_COVERAGE_TOOLS)
+
+clean: ## Remove build artefacts
+	$(CARGO) clean
+	rm -f .typos-oxendict-base.json .typos-oxendict-base.toml
+
+test: check-build-tools
+test: export RUSTFLAGS := $(DEV_RUST_FLAGS)
+test: ## Run tests with warnings treated as errors
+	PATH="$(BUILD_TOOLS_PATH)" $(CARGO) $(TEST_CMD) $(TEST_FLAGS) $(TEST_UI_EXCLUDE) $(BUILD_JOBS)
+	PATH="$(BUILD_TOOLS_PATH)" RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" $(CARGO) test --doc --workspace --all-features
+
+# Compile-time contract tests build nested Cargo projects, so the lane runs
+# them on their own instead of inside the instrumented coverage build. It is
+# part of `all` for exactly that reason: excluding the targets from `test`
+# would otherwise drop them from the comprehensive local gate. A project
+# without `tests/compile_*.rs` reports an intentional no-op.
+test-ui: check-build-tools ## Run compile-time contract tests
+	@set -euo pipefail; \
+	if [ -z "$(strip $(UI_TEST_TARGETS))" ]; then \
+	  echo "No compile-time UI test targets (tests/compile_*.rs); nothing to run."; \
+	  exit 0; \
+	fi; \
+	PATH="$(BUILD_TOOLS_PATH)" RUSTFLAGS="$(DEV_RUST_FLAGS)" $(CARGO) $(UI_TEST_CMD) $(UI_TEST_FLAGS) $(addprefix --test ,$(UI_TEST_TARGETS))
+
+target/debug/$(TARGET): check-build-tools
+	PATH="$(BUILD_TOOLS_PATH)" RUSTFLAGS="$(DEV_RUST_FLAGS)" $(CARGO) build $(BUILD_JOBS)
+
+target/release/$(TARGET):
+	PATH="$(BUILD_TOOLS_PATH)" RUSTFLAGS="$(RELEASE_RUST_FLAGS)" $(RELEASE_CARGO) build $(BUILD_JOBS) --release
+
+coverage: check-coverage-tools ## Generate lcov coverage with lld for llvm-tools compatibility
+	@echo "coverage linker flags: $(COVERAGE_LINKER_FLAGS)"
+	CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang \
+		RUSTFLAGS="$(COVERAGE_RUST_FLAGS)" \
+		CFLAGS="$(COVERAGE_LINKER_FLAGS)" \
+		LDFLAGS="$(COVERAGE_LINKER_FLAGS)" \
+		$(CARGO) llvm-cov $(COVERAGE_NEXTEST) --lcov --output-path lcov.info $(TEST_FLAGS) $(TEST_UI_EXCLUDE)
+
+# `git ls-files -z` enumerates the YAML this project owns. The patterns end in
+# `.yml` or `.yaml`, so Copier/Jinja sources are never handed to yamllint as
+# though they were YAML. `xargs -0 -r` preserves paths with spaces and runs
+# nothing when no file matches. `pipefail` keeps a failed enumeration from
+# reading as a clean run: without it the pipeline returns xargs's status and the
+# target reports success having linted nothing.
+lint-yaml: ## Lint every tracked YAML file strictly
+	@if ! command -v $(YAMLLINT) >/dev/null 2>&1; then \
+	  echo "yamllint is required to lint YAML; install it with: uv tool install yamllint" >&2; \
+	  exit 1; \
+	fi
+	@set -o pipefail; git ls-files -z '*.yml' '*.yaml' | xargs -0 -r $(YAMLLINT) --strict --
+
+# actionlint inspects the workflow files GitHub actually executes and runs
+# ShellCheck over every `run:` script it finds.
+lint-actions: ## Lint GitHub Actions workflows and their shell scripts
+	@if ! command -v $(ACTIONLINT) >/dev/null 2>&1; then \
+	  echo "actionlint is required to lint workflows; install it from https://github.com/rhysd/actionlint" >&2; \
+	  exit 1; \
+	fi
+	@if ! command -v $(SHELLCHECK) >/dev/null 2>&1; then \
+	  echo "shellcheck is required by actionlint; install it using your OS package manager" >&2; \
+	  exit 1; \
+	fi
+	@$(ACTIONLINT) -shellcheck=$(SHELLCHECK)
+
+lint-shell: ## Lint tracked shell scripts
+	@if ! command -v $(SHELLCHECK) >/dev/null 2>&1; then \
+	  echo "shellcheck is required to lint shell scripts; install it using your OS package manager" >&2; \
+	  exit 1; \
+	fi
+	@set -o pipefail; git ls-files -z '*.sh' | xargs -0 -r $(SHELLCHECK)
+
+lint: check-build-tools lint-yaml lint-actions lint-shell ## Run Clippy with warnings denied
+	PATH="$(BUILD_TOOLS_PATH)" RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" RUSTFLAGS="$(DEV_RUST_FLAGS)" $(CARGO) doc --no-deps
+	PATH="$(BUILD_TOOLS_PATH)" RUSTFLAGS="$(DEV_RUST_FLAGS)" $(CARGO) clippy $(CLIPPY_FLAGS)
+	@echo "Whitaker binary: $(WHITAKER)"
+	PATH="$(USER_BIN_PATH):$(PATH)" RUSTFLAGS="$(WHITAKER_RUST_FLAGS)" $(WHITAKER) --all -- $(CARGO_FLAGS)
+
+typecheck: check-build-tools ## Type-check without building
+	PATH="$(BUILD_TOOLS_PATH)" RUSTFLAGS="$(DEV_RUST_FLAGS)" $(CARGO) check $(CARGO_FLAGS)
+
+fmt: check-rust-toolchain ## Format Rust and Markdown sources
+	$(CARGO) fmt --all
+	$(MDTABLEFIX) --in-place $(MDTABLEFIX_SELECT) $(MDTABLEFIX_RULES)
+
+check-fmt: check-rust-toolchain ## Verify formatting
+	$(CARGO) fmt --all -- --check
+	$(MDTABLEFIX) --check $(MDTABLEFIX_SELECT) $(MDTABLEFIX_RULES)
+
+markdownlint: ## Lint Markdown files
+	$(MDLINT) '**/*.md'
+	+$(MAKE) spelling
+spelling: ## Enforce en-GB-oxendict spelling in Markdown prose
+	@if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+		echo "make spelling needs a Git repository: the gate enumerates tracked files with git ls-files. Run: git init && git add -A" >&2; \
+		exit 1; \
+	fi
+	@if [ -z "$$(git ls-files)" ]; then \
+		echo "make spelling found no tracked files: the gate enumerates tracked files with git ls-files. Run: git add -A" >&2; \
+		exit 1; \
+	fi
+	$(TYPOS_CONFIG_BUILDER) gate --repository .
+
+test-workflow-contracts: ## Check the shared CV-005 workflow contracts
+	$(CV005_CONTRACTS) check --repository .
+
+nixie: ## Validate Mermaid diagrams
+	$(NIXIE) --no-sandbox
+
+audit: rust-audit ## Audit dependencies for known vulnerabilities
+
+rust-audit: ## Audit the Rust workspace for known vulnerabilities
+	set -eo pipefail; \
+	manifest_list=$$(mktemp); \
+	trap 'rm -f "$$manifest_list"' EXIT; \
+	printf "Audit metadata phase: deriving workspace manifests\n"; \
+	$(CARGO) metadata --no-deps --format-version 1 | python3 -c 'import json, sys; metadata = json.load(sys.stdin); members = set(metadata["workspace_members"]); print(metadata["workspace_root"]); [print(package["manifest_path"]) for package in metadata["packages"] if package["id"] in members]' > "$$manifest_list"; \
+	workspace_root=$$(sed -n '1p' "$$manifest_list"); \
+	audit_flags=(); \
+	for advisory in $$CARGO_AUDIT_IGNORES; do \
+		audit_flags+=(--ignore "$$advisory"); \
+	done; \
+	printf "Auditing Rust workspace %s\n" "$$workspace_root"; \
+	sed -n '2,$$p' "$$manifest_list" | while IFS= read -r manifest; do \
+		manifest_dir=$$(dirname "$$manifest"); \
+		printf "Workspace Rust manifest %s\n" "$$manifest_dir/Cargo.toml"; \
+	done; \
+	printf "Audit execution phase: running cargo audit\n"; \
+	printf "Audit failures may indicate RustSec advisories, cargo metadata errors, or documented ignores that need CARGO_AUDIT_IGNORES entries.\n"; \
+	(cd "$$workspace_root" && $(CARGO) audit "$${audit_flags[@]}")
+
+help: ## Show available targets
+	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \
+	awk 'BEGIN {FS=":"; printf "Available targets:\n"} {printf "  %-20s %s\n", $$1, $$2}'

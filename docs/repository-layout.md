@@ -1,0 +1,153 @@
+# Repository layout
+
+This document describes the generated repository layout. It is the canonical
+reference for where source code, tests, configuration, automation, and
+long-lived documentation belong.
+
+## Top-level tree
+
+The tree below shows the generated repository structure. It is intentionally
+compact and omits build output such as `target/`.
+
+```plaintext
+.
+├── .cargo/
+│   └── config.toml
+├── .config/
+│   └── nextest.toml
+├── .github/
+│   ├── cv005.toml
+│   ├── dependabot.yml
+│   └── workflows/
+│       ├── ci.yml
+│       ├── coverage-backstop.yml
+│       ├── coverage-main.yml
+│       ├── delayed-pr-comment.yml
+│       ├── dependabot-automerge.yml
+│       ├── mutation-testing.yml
+
+├── docs/
+│   ├── contents.md
+│   ├── developers-guide.md
+
+│   ├── polonius.md
+
+│   ├── repository-layout.md
+│   ├── users-guide.md
+│   └── ...
+├── scripts/
+│   ├── build-tools-common.sh
+│   ├── check-build-tools.sh
+│   └── install-build-tools.sh
+├── src/
+
+│   └── lib.rs
+
+├── tests/
+│   └── stub.rs
+├── tools/
+│   └── mold/
+│       ├── SHA256SUMS
+│       └── VERSION
+├── .yamllint-estate.yml
+├── .yamllint.yml
+├── AGENTS.md
+├── Cargo.toml
+├── LICENSE
+├── Makefile
+├── README.md
+├── clippy.toml
+├── codecov.yml
+└── rust-toolchain.toml
+```
+
+## Path responsibilities
+
+- `.cargo/config.toml`: Configures Cargo defaults for local development,
+  including the Polonius flag, the Linux linker, and the Cranelift and thread
+  development flags.
+- `.config/nextest.toml`: Bounds test runs with per-test and whole-run timeouts
+  and serializes compiler-spawning tests in a `nested-cargo` group.
+- `.github/cv005.toml`: Selects the workflows and output policy for the shared
+  CV-005 contract checker.
+- `.github/dependabot.yml`: Configures grouped dependency updates, cooldowns,
+  and `rust-toolchain` tracking.
+- `.github/workflows/ci.yml`: Runs the generated project's continuous
+  integration checks.
+- `.github/workflows/coverage-backstop.yml`: Dispatches the coverage publisher
+  daily, so a merge that fires no push event still reaches the ratchet baseline.
+- `.github/workflows/coverage-main.yml`: Publishes main-branch coverage through
+  the shared coverage workflow. It runs on push to `main` and on dispatch; the
+  shared publisher contract permits no other trigger.
+- `.github/workflows/delayed-pr-comment.yml`: Posts a requested comment after a
+  validated delay, through the shared reusable workflow.
+- `.github/workflows/dependabot-automerge.yml`: Delegates Dependabot pull
+  requests to the shared automerge workflow with least-privilege permissions.
+- `.github/workflows/mutation-testing.yml`: Runs scheduled mutation testing
+  through the shared `mutation-cargo` reusable workflow.
+
+- `docs/`: Holds long-lived reference documentation, guides, style rules, and
+  design material.
+- `docs/contents.md`: Indexes the documentation set and should be updated when
+  documentation files are added, renamed, or removed.
+- `docs/users-guide.md`: Explains how to use the generated project and its
+  public build and test commands.
+- `docs/developers-guide.md`: Explains the contributor workflow and local
+  tooling used to work on the generated project.
+
+- `docs/polonius.md`: Records the Polonius toolchain contract, borrow-centric
+  design guidance, and audited borrow-checker classifications.
+
+- `docs/repository-layout.md`: Documents the repository tree and path
+  responsibilities.
+
+- `src/lib.rs`: Contains the library crate root and exported public API
+  surface.
+
+- `scripts/`: Holds the build-tool installer and the read-only checker shared
+  by the Make targets.
+- `tests/`: Holds integration and behavioural tests that exercise public
+  behaviour.
+- `tests/stub.rs`: Keeps the generated test directory valid until real tests
+  replace it.
+- `tools/mold/`: Pins the `mold` release version and the checksums the
+  installer verifies.
+- `.yamllint.yml`: Extends the shared estate configuration with local ignores
+  only.
+- `.yamllint-estate.yml`: Shared strict yamllint base, copied from the estate
+  and not edited locally.
+- `AGENTS.md`: Provides repository-specific working instructions for agents and
+  contributors.
+- `Cargo.toml`: Defines package metadata, dependencies, lint policy, and Cargo
+  configuration.
+- `LICENSE`: Records the project licence text.
+- `Makefile`: Provides the public build, lint, test, coverage, and
+  documentation validation commands.
+- `README.md`: Introduces the project and gives the shortest useful
+  getting-started path.
+- `clippy.toml`: Configures Clippy lint behaviour that is not expressed
+  directly in `Cargo.toml`.
+- `codecov.yml`: Configures coverage reporting behaviour.
+- `rust-toolchain.toml`: Pins the Rust toolchain channel and required
+  components.
+
+## Ownership boundaries
+
+- Keep generated source code under `src/`. Add modules below `src/` when a
+  feature grows beyond a small entrypoint or crate root.
+- Keep black-box integration tests and externally observable workflow tests
+  under `tests/`.
+- Keep reusable documentation under `docs/`. Update `docs/contents.md` whenever
+  a documentation file is added, renamed, or removed.
+- Keep build and validation entrypoints in `Makefile`; prefer adding or
+  extending a Make target over documenting an ad hoc command.
+- Keep continuous integration workflow changes under `.github/workflows/` and
+  dependency-update policy under `.github/dependabot.yml`.
+- Do not commit generated build output such as `target/`, coverage artefacts,
+  or local editor state.
+
+## Updating this document
+
+Update this document when the repository gains a new top-level directory, a new
+long-lived documentation category, a new workflow file, or a changed ownership
+boundary that would otherwise make the tree misleading.
