@@ -85,6 +85,40 @@ while the product implementation is pending.
     newly focused pane, and close it while another session floods output.
     The fixture checks the destination session and exact input bytes.
 
+### 2.3. Benchmark xterm.js renderer configurations
+
+Can a visible-pane WebGL pool keep a foreground shell responsive under
+background output, and what does it cost when switching tabs? Compare the same
+browser-safe frontend under Electron/Chromium and Servo. A single pane isolates
+renderer cost before the reference workspace introduces contention.
+
+- [ ] 2.3.1. Capture single-pane Canvas and WebGL2 controls on each host.
+  - Requires 1.1.3 and 2.1.2. See [terminal engine gate][graphics].
+  - Success: replay the same timed byte trace on a native GPU with locked
+    xterm.js and addon versions, fonts, viewport, scrollback, and build mode.
+    Record the observed renderer and any fallback. Cover idle typing, burst
+    output, and full-screen redraw. Compare transparent Canvas separately.
+- [ ] 2.3.2. Reproduce Velocetty's per-document pool in the frontend fixture.
+  - Requires 2.3.1. See [Velocetty's pool implementation][pool].
+  - Success: reuse the pinned pool and pane lifecycle where practical. Trace
+    one WebGL addon per accelerated pane, release on hide or close, Canvas
+    fallback, and reacquisition on reveal. With three visible panes and a
+    test cap of two, verify least-recently-visible eviction and preservation
+    of terminal contents. Repeat with the default cap of sixteen and record
+    actual addon disposal and context-loss recovery alongside slot counts.
+- [ ] 2.3.3. Compare Canvas-only and pooled rendering on the reference
+      workspace.
+  - Requires 2.2.2 and 2.3.2. See [measured acceptance evidence][metrics].
+  - Success: replay 14 decorated tabs with two and three panes per tab
+    (28 and 42 sessions). Switch tabs and type while background agents stream
+    output. Check focus, input destination, terminal contents, and scrollback
+    in each mode. Run idle and noisy traces separately on both hosts.
+  - Publish repeated-run counts, warm-up policy, p50/p95 key-to-visible-echo
+    and tab-switch-to-readable-frame times, CPU, process-tree memory, and GPU
+    memory where observable. Record unsupported cases and measurement gaps.
+    Compare the paired results against agreed Electron-relative budgets and
+    record which renderer profiles qualify for the two-window trial.
+
 ## 3. Two windows sharing one engine
 
 Idea: a single UI owner can independently present two native windows and retire
@@ -111,9 +145,12 @@ failure of presentation or re-entrancy blocks qualification on that host.
   - Success: a veto preserves the view, committed closure retires it once,
     and evidence records blocking teardown and its observed duration.
 - [ ] 3.1.4. Measure aggregate memory and input responsiveness across windows.
-  - Requires 1.1.3, 2.1.2, 2.2.2, and 3.1.2. See [stage H][h].
+  - Requires 2.3.3 and 3.1.2. See [stage H][h].
   - Success: record queue and GPU peaks, latency, and idle CPU for one, two,
-    and ten windows, including a stalled hidden pane. Agree admission limits
+    and ten windows, including a stalled hidden pane. Repeat the 14-tab
+    benchmark with the tabbed settings window open, change a setting, and
+    verify focus and echo latency after returning to the shell. Agree
+    admission limits
     and product budgets or narrow the supported profile.
 
 ## 4. A document can use desktop services safely
@@ -255,6 +292,7 @@ contract can be verified.
 [metrics]: tauri-runtime-servo-design.md#establish-measured-acceptance-evidence
 [app]: tauri-runtime-servo-design.md#keep-the-application-boundaries-intact
 [p]: tauri-runtime-servo-design.md#stage-p-velocetty-engine-and-protocol-proof
+[pool]: https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/lib/utils/webgl-context-pool.ts
 [graphics]: tauri-runtime-servo-design.md#make-the-actual-xterm-stack-the-first-engine-gate
 [input]: tauri-runtime-servo-design.md#input-and-native-desktop-behaviour
 [migration]: tauri-runtime-servo-design.md#follow-the-existing-migration-dependencies
