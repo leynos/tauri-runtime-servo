@@ -17,6 +17,12 @@ documentation set.
 - [Polonius borrow-checker policy](polonius.md) records the nightly compiler
   contract, borrow-centric design rules, and audit tags used by this project.
 
+## Architecture
+
+- [Tauri Servo runtime design](tauri-runtime-servo-design.md) describes the
+  proposed desktop runtime, the integration boundaries between Tauri and Servo,
+  and the criteria for claiming platform support.
+
 ## Rust reference material
 
 - [Reliable testing in Rust via dependency injection](reliable-testing-in-rust-via-dependency-injection.md)

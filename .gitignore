@@ -3,6 +3,7 @@ target/
 __pycache__/
 *.pyc
 
-# Untracked cache of the estate-wide en-GB-oxendict dictionary.
+# Generated spelling configuration and dictionary cache.
+/typos.toml
 .typos-oxendict-base.json
 .typos-oxendict-base.toml
