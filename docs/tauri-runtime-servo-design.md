@@ -1538,15 +1538,15 @@ complete accessibility claim.
 State the cost of each failure plainly. The engine, every document's script
 thread, and every window share one process.
 
-| Failure                        | What is lost                                           | What survives                                      | Recovery                                                   |
-| ------------------------------ | ------------------------------------------------------ | -------------------------------------------------- | ---------------------------------------------------------- |
-| WebGL context loss in one pane | That pane's accelerated renderer                       | Terminal state, session, other panes               | Fallback renderer after xterm's wait; reacquire on restore |
-| Presentation surface loss      | Frames for one window until the surface is rebuilt     | Documents, sessions, other windows                 | Rebuild the surface; report a terminal failure if it fails |
-| Document reload or navigation  | That document's sessions, under current product policy | Other windows and their sessions                   | New document, new lease, new sessions                      |
-| Script-thread panic            | Unverified: possibly the whole process                 | Unverified                                         | Measured by fault injection before any privileged work     |
-| Engine panic or abort          | Every window and, by lease revocation, every session   | Backend process; backend-owned configuration       | Restart the application; sessions are gone                 |
-| Stalled engine shutdown        | Nothing further, if the order below holds              | Sessions already settled; profile already released | Process-exit watchdog                                      |
-| Unknown preference at start-up | The launch                                             | Profile and previous bundle                        | Build-time preference validation; failed-launch counter    |
+| Failure                        | What is lost                                           | What survives                                                                                                  | Recovery                                                   |
+| ------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| WebGL context loss in one pane | That pane's accelerated renderer                       | Terminal state, session, other panes                                                                           | Fallback renderer after xterm's wait; reacquire on restore |
+| Presentation surface loss      | Frames for one window until the surface is rebuilt     | Documents, sessions, other windows                                                                             | Rebuild the surface; report a terminal failure if it fails |
+| Document reload or navigation  | That document's sessions, under current product policy | Other windows and their sessions                                                                               | New document, new lease, new sessions                      |
+| Script-thread panic            | Unverified: possibly the whole process                 | Unverified                                                                                                     | Measured by fault injection before any privileged work     |
+| Engine panic or abort          | Every window and, by lease revocation, every session   | Backend process; backend-owned configuration                                                                   | Restart the application; sessions are gone                 |
+| Stalled engine shutdown        | Unfinished engine-owned writes, if the watchdog fires  | Sessions already settled; the profile lock stays held until the destructor returns or process exit releases it | Process-exit watchdog                                      |
+| Unknown preference at start-up | The launch                                             | Profile and previous bundle                                                                                    | Build-time preference validation; failed-launch counter    |
 
 The engine-failure row is the significant regression from the Electron host,
 where a renderer crash leaves PTYs alive in another process. Keeping the
