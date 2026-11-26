@@ -1,6 +1,6 @@
 # Tauri Servo runtime — terms of reference
 
-**Status:** Draft v0.2, 26 November 2026. **Audience:** the df12 Productions
+**Status:** Draft v0.3, 26 November 2026. **Audience:** the df12 Productions
 maintainer and agent workshop.
 
 The [context document](context.md) defines the domain vocabulary. The
@@ -27,23 +27,62 @@ The proposed runtime and application migration supply requirements for this
 charter. [Library source](../src/lib.rs) and
 [Velocetty host migration][migration].
 
+## Motivation and stop criteria
+
+These documents have so far described what a Servo host must not regress. They
+have not stated what the maintainer gains from it. Velocetty's own design asks
+only for a Tauri webview, which the Wry and CEF runtimes supply today without
+engine patches. Until a benefit is named and measured, every phase of the
+roadmap is cost.
+
+The maintainer records which of these hypotheses motivates the work. Each has a
+measurement, taken against the best alternative host in the same runs.
+
+| Candidate benefit                   | Falsifying measurement                                                                              |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Smaller installed package           | Installed size against Electron and the Tauri CEF runtime on the first target.                      |
+| Lower memory with many sessions     | Proportional process-tree memory on the reference workspace against Electron and CEF.               |
+| One engine on every platform        | The same build passing the terminal gates on each claimed target, where Wry's system webviews vary. |
+| Independence from Chromium          | A recorded strategic choice; no measurement, and the cost must be accepted on that basis.           |
+| A Servo runtime as a goal in itself | A recorded research or community goal; the product framing then becomes a test workload only.       |
+
+The maintainer sets a threshold for each chosen benefit and a limit for each
+cost before the investment decision in roadmap task 3.2.3. The limits are a
+patch-latency budget for engine security fixes and a budget of maintainer hours
+for each phase. Stop, and keep the existing host, when any of the following
+holds:
+
+- No renderer yields a usable terminal on a stock engine.
+- No chosen benefit meets its threshold against the best alternative host.
+- A carry rehearsal exceeds the patch-latency budget.
+- The maintainer does not accept the unsandboxed engine described in the
+  design's [threat model](tauri-runtime-servo-design.md#threat-model).
+
+If the motive proves to be leaving Electron, with no requirement for Servo, the
+Tauri CEF runtime satisfies it with the same Tauri integration and no patch
+series.
+
 ## Alternatives and stakeholders
 
-Keeping Electron gives the maintainer a working desktop baseline while they
-develop the shared service. Tauri's Wry backend offers a system-webview
-alternative. The CEF runtime offers another bundled engine. Either warrants a
-separate application qualification before a deployment claim. Verso provides
-prior integration experience. Its existence alone establishes neither current
-Velocetty compatibility nor a reason to replace the current host.
-[Runtime comparisons](tauri-runtime-servo-design.md#what-to-carry-forward-from-verso).
+| Alternative                                     | What it offers                                                            | Disposition                                                                     |
+| ----------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Stay on Electron                                | A working desktop host while the shared service is developed              | The fallback; a standing gate keeps it shippable (roadmap task 2.2.3).          |
+| Tauri with the CEF runtime                      | The same Tauri integration, a mature engine, and no engine patches        | Undecided; the null hypothesis, measured as a control in roadmap task 2.3.1.    |
+| Tauri with the Wry runtime                      | System webviews and the smallest package                                  | Undecided; measured as a control in roadmap task 2.3.1.                         |
+| Adopt or collaborate with the published runtime | An existing in-process Servo runtime for Tauri 2, under this crate's name | Undecided; audited in roadmap task 1.2.3.                                       |
+| Tauri 2 in place of a Tauri 3 pre-release       | A stable contract                                                         | Rejected for now: it lacks the runtime URL hook and dynamic runtime selection.  |
+| Servo without the in-page Tauri bridge          | Most of the benefit with no patch series, if the product needs no bridge  | Undecided; compared in ADR 0001 and chosen in roadmap task 1.2.3.               |
+| Verso                                           | Prior integration experience                                              | Rejected as a base: unmaintained, per-window subprocesses, and lost provenance. |
 
-Another project has already published an in-process Servo runtime for Tauri 2
-under the crate name this repository uses. Auditing or collaborating with it is
-an alternative to building every host component afresh, and its existence means
-this crate needs a different published name. Tauri's maintainers have said they
-prefer a Servo runtime to live outside their repository, so no first-party
-option is expected.
-[Related runtimes](tauri-runtime-servo-design.md#related-in-process-servo-runtimes).
+The published runtime is described under
+[related runtimes](tauri-runtime-servo-design.md#related-in-process-servo-runtimes),
+and Verso under
+[runtime comparisons](tauri-runtime-servo-design.md#what-to-carry-forward-from-verso).
+The transport comparison is
+[ADR 0001](adrs/adr-0001-desktop-service-transport.md). Tauri's maintainers
+have said they prefer a Servo runtime to live outside their repository, so no
+first-party option is expected. This crate needs a different published name
+whichever alternative is chosen.
 
 The df12 Productions development team consists of one human maintainer and the
 agent workshop. Product direction, Velocetty integration, and release approval
@@ -87,6 +126,7 @@ Hyper configurations and plugins is outside Velocetty's product commitment.
 | Users complete representative terminal work  | On each claimed target, exercise multi-window interaction, input composition, keyboard navigation, screen-reader use, and foreground input during noisy output with the locked frontend. Compare the observed result to the agreed baseline. |
 | Users retain control of native privileges    | Reloading, navigating, or closing a document retires its authority. Exercises show that a successor cannot receive its predecessor's pending privileged results or reuse its connection grant.                                               |
 | The maintainer can support the result        | Install a matched package outside a developer checkout. Demonstrate an update and the documented recovery behaviour with an existing profile. Publish the revisions, target, exclusions, results, and measured budgets.                      |
+| The host is worth its cost                   | A chosen benefit meets its threshold against the best alternative host in the same runs, and the measured cost of carrying the patch series stays within the declared budgets.                                                               |
 | The maintainer can make a migration decision | Record which workloads passed, failed, or await evidence and the rationale for adopting, deferring, or stopping on that target. Wider adoption and revenue targets remain open.                                                              |
 
 ## Constraints and assumptions
@@ -123,6 +163,16 @@ cannot submit its patches upstream. A downstream patch series is the working
 assumption. The maintenance budget, available capacity, and delivery dates
 remain open.
 
+**Constraints of the team.** One person observes every screen-reader, input
+method, physical-display, and signing result. The roadmap marks those tasks as
+human-observed and batches them into one session for each phase. The maintainer
+states the hours available for each phase; a phase whose human-observed work
+exceeds them is narrowed before it starts.
+
+**Accepted risk.** The engine runs in the application process without a sandbox
+on Windows and Apple Silicon, and renders attacker-influenced terminal output.
+A distributed build requires the maintainer's recorded acceptance of that risk.
+
 ## Open decisions
 
 | Question                                               | What closes it                                                                                                                              | Decision affected                           |
@@ -132,6 +182,12 @@ remain open.
 | Which downstream patches can the team sustain?         | The maintainer records available capacity, patch scope, and an update route. Rehearse an engine update and recovery on the declared target. | Distribution to users.                      |
 | What would justify wider investment?                   | The maintainer specifies an adoption or maintenance-cost criterion beyond the first application decision.                                   | Expansion beyond the reference application. |
 | Under which name is the crate published?               | The maintainer chooses a free registry name or agrees a shared one with the existing project's author.                                      | Any public release.                         |
+| Why Servo, and what threshold must it meet?            | The maintainer selects a benefit hypothesis and its threshold from the motivation table.                                                    | The investment decision.                    |
+| How long may a known engine fix stay unreleased?       | The maintainer declares a patch-latency budget in days; the carry rehearsals measure against it.                                            | The investment decision; distribution.      |
+| How many maintainer hours does each phase have?        | The maintainer states the hours for human-observed work in each phase.                                                                      | Scope of each phase.                        |
+| Do sessions survive an engine failure?                 | The maintainer chooses between destroying sessions on abnormal host loss and a bounded reattachment period.                                 | Backend contract; product subset.           |
+| May the backend share the engine's process?            | The design proposes that it may not. Velocetty's maintainer confirms the placement for the Rust backend.                                    | Backend architecture.                       |
+| Which desktop-service transport is used?               | The native-service inventory and the origin probe select an option from ADR 0001.                                                           | Size of the patch series.                   |
 
 These questions permit prototype work. Before approving distribution, the
 maintainer selects the target, sets acceptance thresholds, and accepts the

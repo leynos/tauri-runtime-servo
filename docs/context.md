@@ -32,6 +32,9 @@ the product user, a distinct role from developing the runtime.
 | Browser profile       | Engine-managed state such as cookies, credentials, and storage. Several native windows can share it.                                           |
 | Runtime               | The adapter through which Tauri operates native windows and webviews and delivers application events.                                          |
 | Engine host           | The runtime component that owns Servo and coordinates engine work, native input, and presentation.                                             |
+| Engine profile        | The engine preferences and Cargo features a build enables, declared for one engine revision.                                                   |
+| Patch series          | An ordered set of downstream changes to Servo or to Tauri core, each with one purpose, carried against one pinned revision.                    |
+| Virtual origin        | A reserved HTTP(S) origin served inside the engine's ordinary fetch pipeline, with no network asset server.                                    |
 
 ## Identity and authority
 
@@ -39,16 +42,17 @@ A reload can preserve the native window and its webview while replacing the
 document. Treating a window label as the recipient of a command result would
 let a replacement document receive a previous document's data.
 
-| Term           | Meaning and boundary                                                                                                                           |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native window  | An operating-system window with a lifetime and a presentation surface.                                                                         |
-| Webview        | A browsing context hosted in the application. The initial profile places one in each native window.                                            |
-| Frame          | A context in which documents load. Navigation can replace the document while the frame survives.                                               |
-| Document token | An opaque reference supplied by the engine that identifies one document for the proposed native bridge.                                        |
-| Origin         | A browser security principal. Multiple distinct documents can share an origin.                                                                 |
-| Invoke         | A request from a frontend document to a Tauri command. It carries desktop operations such as connection bootstrap.                             |
-| Backend lease  | The backend's revocable authority for connections associated with a particular host document. A connection can outlive the bootstrap exchange. |
-| Admission      | Acceptance of work into a bounded queue. Completion, cancellation, and delivery are later outcomes.                                            |
+| Term                  | Meaning and boundary                                                                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native window         | An operating-system window with a lifetime and a presentation surface.                                                                         |
+| Webview               | Servo's top-level unit of web content, with its own rendering context. The initial profile places one in each native window.                   |
+| Frame                 | A browsing context within a webview, in which documents load. Navigation can replace the document while the frame survives.                    |
+| Document token        | An opaque reference supplied by the engine that identifies one document for the proposed native bridge.                                        |
+| Origin                | A browser security principal. Multiple distinct documents can share an origin.                                                                 |
+| Invoke                | A request from a frontend document to a Tauri command. It carries desktop operations such as connection bootstrap.                             |
+| Document registration | The runtime's record of one live document and its token. Retiring it cancels that document's pending deliveries.                               |
+| Backend lease         | The backend's revocable authority for connections associated with a particular host document. A connection can outlive the bootstrap exchange. |
+| Admission             | Acceptance of work into a bounded queue. Completion, cancellation, and delivery are later outcomes.                                            |
 
 ## Reading a support claim
 
@@ -59,7 +63,22 @@ required to advance a specific profile on that target. For example, a
 successful launch on Linux with X11 supplies evidence for that display backend.
 Wayland requires its own run.
 
+The *verified subset* is the compatibility profile for the reference
+application: exactly the operations in its product-subset inventory. An
+*evidence mode* states how a result was gathered: desk review, headless CI,
+scripted native runner, or human-observed.
+
+Four artefacts record facts about a build. Each has one meaning.
+
+| Artefact               | Meaning                                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------------------- |
+| Compatibility manifest | What a build is: its revisions, patch series, features, and supported operations.                   |
+| Capability report      | The manifest's supported-operation list, as the running build reports it before launch.             |
+| Evidence record        | The outcome of each applicable conformance gate for one build and target, keyed by gate identifier. |
+| Crash record           | A bounded local description of one failure, without terminal contents or credentials.               |
+
 The [terms of reference](terms-of-reference.md) defines the user outcomes. The
 [runtime design](tauri-runtime-servo-design.md) specifies the proposed
-contracts and the [roadmap](roadmap.md) identifies the evidence needed to
-qualify them.
+contracts. The [conformance gates](conformance-gates.md) define the acceptance
+criteria, and the [roadmap](roadmap.md) schedules the work that gathers the
+evidence.

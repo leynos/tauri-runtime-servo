@@ -27,6 +27,12 @@ documentation set.
 - [Tauri Servo runtime design](tauri-runtime-servo-design.md) describes the
   proposed desktop runtime, the integration boundaries between Tauri and Servo,
   and the criteria for claiming platform support.
+- [Conformance gates](conformance-gates.md) define the acceptance criteria,
+  gate identifiers, and evidence modes for every claim in the design.
+- [ADR 0001: Desktop-service transport](adrs/adr-0001-desktop-service-transport.md)
+  compares the native bridge with two transports that need fewer patches.
+- [ADR 0002: Toolchain scope for the engine graph](adrs/adr-0002-toolchain-scope-for-the-engine-graph.md)
+  proposes how the workspace compiler flags relate to the Servo build.
 - [Design review](design-review.md) records the evidence, risks, and conditions
   for proceeding with the prototype.
 - [Delivery roadmap](roadmap.md) sequences the work from the first terminal
