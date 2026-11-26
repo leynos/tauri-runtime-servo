@@ -123,6 +123,9 @@ the general runtime is itself the goal.
 - Option C's grant delivery at first navigation is unspecified.
 - Option B's extended provider has the same fetch-conformance obligations as
   Option A's.
+- Option B is untraced. Nobody has checked how Tauri's invoke script behaves
+  when no native message fallback exists, so the option is a question for
+  roadmap task 1.2.3 and not yet a recommendation.
 - The comparison rests on source reading. The probe may show that Servo's
   loopback behaviour differs from its source.
 
