@@ -1575,16 +1575,17 @@ requires an explicit engine begin/poll/complete API; otherwise the alpha\
 documents the blocking limit. Never terminate an individual engine thread\
 and reuse its process state.
 
-Order application exit so that a stalled destructor costs nothing durable.
-First settle or hand back terminal sessions through the backend. Then flush
-runtime-owned state. Then drop the final engine handle, and release the profile
-lock only after its destructor has returned, because the engine's own writers,
-such as the network state writer, may persist into the profile until then. Arm
-a watchdog when the handle is dropped: if the destructor has not returned
-within a declared interval, exit the process, which releases the advisory lock.
-Exiting a process is safe where terminating one engine thread is not, because
-nothing reuses the process state. Record the observed teardown time and every
-watchdog firing.
+Order application exit so that a stalled destructor cannot cost settled
+sessions or flushed runtime-owned state. A watchdog exit can still lose
+unfinished engine-owned writes. First settle or hand back terminal sessions
+through the backend. Then flush runtime-owned state. Then drop the final engine
+handle, and release the profile lock only after its destructor has returned,
+because the engine's own writers, such as the network state writer, may persist
+into the profile until then. Arm a watchdog when the handle is dropped: if the
+destructor has not returned within a declared interval, exit the process, which
+releases the advisory lock. Exiting a process is safe where terminating one
+engine thread is not, because nothing reuses the process state. Record the
+observed teardown time and every watchdog firing.
 
 On a view crash, show or emit a recoverable error only if the engine\
 remains in a verified usable state. A fatal engine failure requires\
