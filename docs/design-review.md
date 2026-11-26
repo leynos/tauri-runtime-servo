@@ -138,8 +138,9 @@ Wafflecat's alternative keeps Servo and removes the privileged bridge. The
 backend serves the frontend and the terminal WebSocket from one authenticated
 loopback origin, which the remote-browser deployment already needs. Desktop
 services become messages in Velocetty's protocol. A WebSocket closes with its
-document, so the engine already prevents a successor from receiving a
-predecessor's results.
+document. Successor isolation for pending results depends on the backend lease
+contract, which revokes the lease, purges pending payloads, and rejects further
+output. Conformance gate V-5 must test this race before the property is claimed.
 
 It plausibly removes the whole Servo and Tauri patch series, survives changes
 to Tauri's IPC and Servo's embedding API, and makes the desktop and remote

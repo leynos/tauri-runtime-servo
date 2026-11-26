@@ -45,11 +45,16 @@ with an untested compiler.
 
 ### Option B: Scope the workspace flags to this project's crates
 
-Build the engine graph with Servo's release compiler and no workspace-specific
-flags, and apply the nightly flags only to this project's crates. A single
-compiler must still build one linked binary, so this option requires either a
-nightly that accepts the engine unchanged with the project-specific flags
-confined by package, or a prebuilt engine artefact linked into the final build.
+Build the engine graph without workspace-specific flags, and apply the nightly
+flags only to this project's crates. A single compiler must still build one
+linked binary, so the option has two arrangements:
+
+- B1, per-package flags: the workspace nightly builds the whole graph, with
+  the project-specific flags confined by package. It needs a nightly that
+  accepts the engine unchanged, and the engine is not built by Servo's release
+  compiler.
+- B2, prebuilt artefact: Servo's release compiler builds the engine as an
+  artefact that is linked into the final build.
 
 ### Option C: Keep the adapter free of Polonius-only code
 
@@ -58,22 +63,24 @@ checker, and build the whole graph with Servo's release compiler. The project's
 other crates keep the nightly contract. It removes the conflict entirely for
 the code that links the engine and gives up the Polonius contract for that code.
 
-| Topic                             | Option A | Option B     | Option C     |
-| --------------------------------- | -------- | ------------ | ------------ |
-| Full engine builds per flag set   | One each | One in total | One in total |
-| Engine rebuilt on a nightly bump  | Yes      | No           | No           |
-| Engine compiler matches upstream  | No       | Yes          | Yes          |
-| Polonius contract for the adapter | Kept     | Kept         | Given up     |
-| Build configuration complexity    | Lowest   | Highest      | Moderate     |
+| Topic                             | Option A | Option B1    | Option B2    | Option C     |
+| --------------------------------- | -------- | ------------ | ------------ | ------------ |
+| Full engine builds per flag set   | One each | One in total | One in total | One in total |
+| Engine rebuilt on a nightly bump  | Yes      | Yes          | No           | No           |
+| Engine compiler matches upstream  | No       | No           | Yes          | Yes          |
+| Polonius contract for the adapter | Kept     | Kept         | Kept         | Given up     |
+| Build configuration complexity    | Lowest   | High         | Highest      | Moderate     |
 
 _Table 1: Comparison of toolchain arrangements._
 
 ## Decision outcome / proposed direction
 
-Prefer Option B if roadmap task 1.2.1 shows that per-package flags or a
-prebuilt engine artefact are practical. Fall back to Option C if they are not.
-Reject Option A unless measurement shows its build cost is acceptable and the
-engine passes its upstream control under the workspace compiler.
+Prefer Option B2 if roadmap task 1.2.1 shows that a prebuilt engine artefact is
+practical. Otherwise prefer Option B1 if per-package flags are practical and
+the engine passes its upstream control under the workspace nightly. Fall back
+to Option C if neither is practical. Reject Option A unless measurement shows
+its build cost is acceptable and the engine passes its upstream control under
+the workspace compiler.
 
 Roadmap task 1.2.1 measures clean and incremental wall time, peak link memory,
 target-directory size, and hosted-runner feasibility for each arrangement, and

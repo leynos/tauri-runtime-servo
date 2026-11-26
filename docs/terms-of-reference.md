@@ -35,8 +35,10 @@ only for a Tauri webview, which the Wry and CEF runtimes supply today without
 engine patches. Until a benefit is named and measured, every phase of the
 roadmap is cost.
 
-The maintainer records which of these hypotheses motivates the work. Each has a
-measurement, taken against the best alternative host in the same runs.
+The maintainer records which of these hypotheses motivates the work. The first
+three are measured benefits, each with a falsifying measurement taken against
+the best alternative host in the same runs. The last two are strategic
+motivations with no measurement.
 
 | Candidate benefit                   | Falsifying measurement                                                                              |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -46,14 +48,20 @@ measurement, taken against the best alternative host in the same runs.
 | Independence from Chromium          | A recorded strategic choice; no measurement, and the cost must be accepted on that basis.           |
 | A Servo runtime as a goal in itself | A recorded research or community goal; the product framing then becomes a test workload only.       |
 
-The maintainer sets a threshold for each chosen benefit and a limit for each
-cost before the investment decision in roadmap task 3.2.3. The limits are a
-patch-latency budget for engine security fixes and a budget of maintainer hours
-for each phase. Stop, and keep the existing host, when any of the following
-holds:
+The maintainer sets a threshold for each chosen measured benefit and a limit
+for each cost before the investment decision in roadmap task 3.2.3. A strategic
+motivation has no threshold. It counts towards the investment gate only when
+the maintainer records, at task 3.2.3, a written acceptance that names the
+motivation and accepts the measured carrying cost on that basis. The benefit
+side of the gate passes when at least one chosen measured benefit meets its
+threshold, or when a strategic motivation is accepted in this way. Neither
+route waives a cost limit. The limits are a patch-latency budget for engine
+security fixes and a budget of maintainer hours for each phase. Stop, and keep
+the existing host, when any of the following holds:
 
 - No renderer yields a usable terminal on a stock engine.
-- No chosen benefit meets its threshold against the best alternative host.
+- No chosen measured benefit meets its threshold against the best alternative
+  host, and no strategic motivation has a recorded acceptance.
 - A carry rehearsal exceeds the patch-latency budget.
 - The maintainer does not accept the unsandboxed engine described in the
   design's [threat model](tauri-runtime-servo-design.md#threat-model).

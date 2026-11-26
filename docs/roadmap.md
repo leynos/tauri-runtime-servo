@@ -83,7 +83,8 @@ before extending the adapter.
   - Success: a checked-in machine-readable schema keyed by gate identifier,
     with the four outcomes and the evidence mode, plus a one-page summary
     format.
-  - Before any Servo measurement, fix the trace provenance, byte and burst
+  - Before any terminal benchmark measurement, fix the trace provenance, byte
+    and burst
     rates, line length, viewport, DPI, and scrollback; the minimum runs,
     keystrokes in each run, warm-up, and host interleaving; and the
     statistics: p50, p95, p99, maximum, count over a fixed threshold, and
@@ -316,9 +317,13 @@ multiplies it, and gives the maintainer one decision that admits phase 4.
 - [ ] 3.2.2. Carry the smallest real patch across releases.
   - Requires 3.2.1. Evidence: headless CI and scripted native runner.
   - See [packaging and upgrades][package].
-  - Success: carry one script-thread patch from Servo 0.7.0 to 0.8.0 and to
-    the next monthly release, and one Tauri patch across one pre-release.
-    Record workshop time and the maintainer's review minutes for each move.
+  - Success: carry the smallest Servo patch that the chosen transport
+    retains from Servo 0.7.0 to 0.8.0 and to the next monthly release, and the
+    smallest retained Tauri patch across one pre-release. Record workshop time
+    and the maintainer's review minutes for each move. When task 3.2.1 finds
+    that the chosen transport retains no patch for one of the two projects,
+    record that finding in place of that carry; a transport that retains no
+    patch satisfies this task without a rehearsal.
 - [ ] 3.2.3. Record the investment decision.
   - Requires 2.3.3, 3.1.6, 3.1.7, and 3.2.2. Evidence: desk review.
   - See [decision gates][decision-gates] and
@@ -335,9 +340,9 @@ multiplies it, and gives the maintainer one decision that admits phase 4.
 Idea: the packaged app can obtain its local service connection while the host
 keeps native authority bound to the originating live document.
 
-The tasks below describe the native-bridge transport. If task 1.2.3 selected
-another option from ADR 0001, restate steps 4.1 and 4.2 for it before starting
-them.
+The tasks below describe the native-bridge transport. If the transport that
+task 3.2.3 records from ADR 0001 is not the native bridge, restate steps 4.1
+and 4.2 for it before starting them.
 
 ### 4.1. Establish the packaged origin and document lifecycle
 
@@ -380,9 +385,11 @@ production origin. Local backend authorization remains a product duty.
 - [ ] 4.2.1. Integrate the lease and the authenticated host channel.
   - Requires 2.2.2 and 4.1.4. Evidence: scripted native runner.
   - See [local service authentication][auth] and gates V-5 and V-6.
-  - Success: the packaged frontend can open its scoped session. Retirement,
-    service restart, or control-channel loss revokes the old lease and stops
-    its associated sessions and output. Killing the host leaves the backend
+  - Success: the packaged frontend can open its scoped session. Retirement or
+    service restart revokes the old lease and stops its associated sessions
+    and output. Control-channel loss revokes the old lease, and its sessions
+    follow the host-loss session policy recorded in task 3.2.3; under the
+    initial profile they are destroyed. Killing the host leaves the backend
     alive and its sessions in the recorded state.
   - External: the lease contract is Velocetty's to ratify.
 - [ ] 4.2.2. Publish the first product-subset evidence record.

@@ -74,8 +74,11 @@ and the WebSocket from one authenticated loopback origin, which is what the
 remote-browser deployment already requires. Desktop services become messages in
 the product's protocol, using the capability negotiation its requirements
 already call for. The host passes a single-use grant to the first navigation. A
-WebSocket closes with its document, so a successor document cannot receive a
-predecessor's results.
+WebSocket closes with its document, but closing one connection does not stop
+the backend from delivering a pending result. Successor isolation therefore
+rests on the backend lease contract: retirement revokes the lease, purges
+pending payloads, and rejects further output. Conformance gate V-5 must test
+that race before the property is claimed.
 
 Tauri still supplies windows, menus, tray, and bundling from Rust. The in-page
 Tauri API and plugins are unavailable, and the general-runtime goal is
@@ -84,15 +87,15 @@ and is defended by the grant and the origin check. Delivering the grant at
 navigation needs a mechanism that keeps it out of URLs and logs, which the
 design currently forbids placing in a URL.
 
-| Topic                               | Option A                    | Option B                     | Option C                          |
-| ----------------------------------- | --------------------------- | ---------------------------- | --------------------------------- |
-| Servo additions                     | Four                        | Two, one of them extended    | None expected                     |
-| Tauri core changes                  | Several, in contested areas | Caller identity only         | None                              |
-| Stale-reply protection              | New engine operation        | Supplied by fetch            | Supplied by the socket's lifetime |
-| In-page Tauri API and plugins       | Preserved                   | Preserved for invoke         | Unavailable                       |
-| General runtime for other consumers | Possible                    | Possible with event delivery | Abandoned or deferred             |
-| One frontend for desktop and remote | No                          | No                           | Yes                               |
-| New exposure                        | In-process native binding   | In-process provider          | Loopback HTTP listener            |
+| Topic                               | Option A                    | Option B                     | Option C                            |
+| ----------------------------------- | --------------------------- | ---------------------------- | ----------------------------------- |
+| Servo additions                     | Four                        | Two, one of them extended    | None expected                       |
+| Tauri core changes                  | Several, in contested areas | Caller identity only         | None                                |
+| Stale-reply protection              | New engine operation        | Supplied by fetch            | Backend lease revocation (gate V-5) |
+| In-page Tauri API and plugins       | Preserved                   | Preserved for invoke         | Unavailable                         |
+| General runtime for other consumers | Possible                    | Possible with event delivery | Abandoned or deferred               |
+| One frontend for desktop and remote | No                          | No                           | Yes                                 |
+| New exposure                        | In-process native binding   | In-process provider          | Loopback HTTP listener              |
 
 _Table 1: Comparison of desktop-service transports._
 
@@ -108,9 +111,11 @@ for the reference application. It removes the patch series that the maintainer
 would otherwise carry indefinitely, and it converges the desktop and remote
 frontends.
 
-If the inventory finds a required in-page Tauri API, prefer Option B over
-Option A unless a required feature needs events that only targeted delivery can
-carry.
+If the inventory finds a required in-page Tauri API, the choice between Option
+A and Option B remains open. It depends on the trace in roadmap task 1.2.3 of
+how Tauri's invoke script behaves when no native message fallback exists, and
+on whether a required feature needs events that only targeted delivery can
+carry. The maintenance decision makes that choice.
 
 Retain Option A's specification in the design as the contract a general runtime
 would need. Building it requires a second consumer or a recorded decision that
