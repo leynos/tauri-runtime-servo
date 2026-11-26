@@ -124,6 +124,35 @@ no test pins the block's text.
 Install `clang`, `lld`, `mold`, `python3`, and `cargo-audit` before running the
 full generated workflow locally on Linux.
 
+## Forks, harness, and runners
+
+The runtime is a proposal; the repository contains a stub. The conventions
+below let a contributor start the first roadmap tasks. Roadmap task 1.2.1
+confirms or replaces each proposed item and records the result in the build
+manifest.
+
+- **Patch series.** The design requires downstream changes to Servo and to
+  Tauri core. Each series is an ordered set of single-purpose patches against
+  one pinned upstream revision. Proposed: keep each series on a branch of a
+  fork, named for the upstream revision it targets, and reference it from
+  `Cargo.toml` by exact Git revision. This repository's lints and file-size
+  limits do not apply to patches; each fork's own checks do.
+- **Contribution policy.** Servo does not accept generated code,
+  documentation, issues, or comments. Do not open issues or pull requests
+  against Servo from the workshop. A human author writes and submits anything
+  sent upstream.
+- **Phase 2 harness.** Terminal experiments before the host exists run in a
+  stock Servo shell (roadmap task 1.1.1) and then in the inert window of task
+  1.2.1, serving the fixture from a loopback HTTP origin. Neither is the
+  production host, and their results describe the engine only.
+- **Runners.** Each task names an evidence mode, defined in the
+  [conformance gates](conformance-gates.md#evidence-modes). The build manifest
+  names the machine for each target. Do not report a native gate from a
+  headless or software-rendered run.
+- **Preferences.** Servo panics on an unknown preference name. Declare the
+  engine profile for one revision and check it against that revision's
+  preference table.
+
 ## Release workflow
 
 Application projects render `.github/workflows/release.yml`. A tag push matching

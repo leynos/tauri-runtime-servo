@@ -97,6 +97,10 @@ compact and omits build output such as `target/`.
 
 - `docs/polonius.md`: Records the Polonius toolchain contract, borrow-centric
   design guidance, and audited borrow-checker classifications.
+- `docs/adrs/`: Holds architectural decision records, one decision in each
+  file, named `adr-nnnn-title-slug.md`.
+- `docs/conformance-gates.md`: Defines the acceptance criteria, gate
+  identifiers, and evidence modes that the roadmap's tasks cite.
 
 - `docs/repository-layout.md`: Documents the repository tree and path
   responsibilities.

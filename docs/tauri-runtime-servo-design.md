@@ -2,15 +2,26 @@
 
 **Status:** Proposed architecture; no implementation or compatibility claim.
 
-**Date:** 29 October 2026.
+**Source baseline:** 29 October 2026. **Design review:** 26 November 2026.
+**Source validation:** 26 November 2026.
 
 **Audience:** Runtime implementers, application developers evaluating the\
 backend, and reviewers of the Servo and Tauri integration boundaries.
 
-**Download:**
-[Complete Markdown specification](https://chatgpt.com/library?file_id=libfile_de66df53c11c8191aa9e43c299dcc3b5\&account_id=personal)
-·
-[Design bundle with proposed Rust contracts and conformance manifest](https://chatgpt.com/library?file_id=libfile_cccafbee5c708191b46bb0bbe71675f8\&account_id=personal)
+Descriptions of existing behaviour refer to the dated source pins unless a
+later revision is named.
+
+The [terms of reference](terms-of-reference.md) define the product outcome. The
+[context](context.md)
+defines the vocabulary and the [roadmap](roadmap.md) sequences the evidence
+needed for delivery.
+
+The [design review](design-review.md) records the panel's verdict and the
+conditions for proceeding. The [conformance gates](conformance-gates.md) define
+the acceptance criteria. Two proposed decision records qualify this design:
+[ADR 0001](adrs/adr-0001-desktop-service-transport.md) on the desktop-service
+transport and [ADR 0002](adrs/adr-0002-toolchain-scope-for-the-engine-graph.md)
+on toolchain scope.
 
 ## Architectural decision
 
@@ -96,9 +107,18 @@ A successful runtime must:
 
 ## Velocetty as the reference application
 
+Velocetty is an in-house fork of Vercel Hyper for developers working with
+coding agents. Its product brief is “VSCode for terminals”. A developer may
+monitor several agent sessions while typing in another pane, switch between
+windows, and inspect earlier output. The runtime must keep input responsive and
+deliver events to the intended window under that workload. Velocetty owns the
+workspace experience, pane layout, and session semantics. Velocetty makes no
+backwards-compatibility promise for Hyper configurations or plugins. Product
+fixtures exercise the configuration and plugin contracts Velocetty publishes.
+
 Use Velocetty revision\
 `40949b2f4b266d8523d6ffe680f1dbc53ad9b541`, from 29 October 2026, as the\
-first application baseline. Its current implementation runs on Electron,\
+first application baseline. That revision runs on Electron,\
 React 19, Redux, and xterm 5.3.0. It already has a transport facade,\
 visible-pane WebGL allocation, Canvas fallback, and runtime telemetry.\
 The protobuf/WebSocket service, Rust PTY backend, and Tauri packaging are\
@@ -107,6 +127,23 @@ planned work. The frontend still contains Electron and Node dependencies.\
 [terminal implementation][terminal-implementation],
 [locked dependencies][locked-dependencies],\
 [roadmap](https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/docs/roadmap.md).
+
+At the November comparison revision, Velocetty's manifest declares Electron
+`^45.2.1` (Chromium 156) and xterm `^5.3.0`. The older fixture declares Electron
+`^44.4.1` (Chromium 152). Both revisions carry a `build:backend` script, which
+only type-checks a placeholder package: neither revision contains a backend
+service, and the product roadmap's protocol, service-shell, Rust PTY, and Tauri
+items remain open. No commit between the two revisions touches the transport,
+terminal renderer, context pool, or session batcher. Keep the October lockfile
+for reproducible comparisons. Qualify a newer product revision with the same
+terminal workload and an end-to-end backend session before promoting it.
+[November Velocetty manifest][velocetty-november].
+
+Velocetty's own design names “the Tauri webview” without selecting a Tauri
+major version or a web engine, and does not mention Servo. Targeting Tauri 3
+and Servo is therefore a decision of this project that the product has yet to
+adopt. The [terms of reference](terms-of-reference.md) record it as an
+assumption for the maintainer to confirm.
 
 The product's technical design specifies that both the local Tauri\
 frontend and remote browser frontend use the same protobuf/WebSocket\
@@ -159,7 +196,26 @@ separate WebGL addon/context. The runtime must not add another terminal\
 pool or map each pane to a native view. Test aggregate GPU pressure with\
 multiple application windows, since each document's pool does not prove\
 a process-wide memory bound.
-[Terminal rendering and allocation](https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/lib/components/term.tsx).
+[Terminal rendering](https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/lib/components/term.tsx),
+[context pool][velocetty-pool].
+
+A pane releases its slot when it stops being visible, and every hidden pane
+runs the Canvas renderer. Least-recently-visible eviction therefore occurs only
+when the visible panes outnumber the cap, which the default of sixteen rarely
+permits. A workspace with many tabs is mostly Canvas renderers in every
+configuration; the accelerated and Canvas-only configurations differ only in
+the visible panes. The pane-visibility check also calls
+`document.elementFromPoint` and `getBoundingClientRect`, so hit-testing
+correctness in Servo is part of the terminal gate.
+
+Each document's pool admits sixteen accelerated panes, and one engine process
+hosts every window. Ten windows therefore permit 160 terminal contexts plus ten
+presentation contexts in one process. Electron gives each window its own
+renderer process, so the comparator never meets that total. Whether Servo caps
+live WebGL contexts, or serializes them on one thread, is unverified. The host
+proof measures context exhaustion with a fixed number of visible panes in each
+window. The maintainer then sets a process-wide cap on accelerated panes, or
+records the decision to rely on the per-document pool.
 
 ### Make the actual xterm stack the first engine gate
 
@@ -170,16 +226,47 @@ build does not establish the intended accelerated terminal path.\
 [Servo release preferences](https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/config/prefs.rs).
 
 Create a declared Velocetty engine profile that explicitly enables and\
-tests WebGL2 and, where correct, IntersectionObserver. Avoid the blanket\
-experimental-feature switch. A preference proves that an API can be\
+tests WebGL2 and, where correct, IntersectionObserver. Set each preference\
+individually. The blanket experimental-feature switch is a servoshell\
+command-line flag backed by a shell-private list; libservo offers no\
+equivalent, and the list enables unrelated features. A preference proves\
+that an API can be\
 requested; it does not prove shader, atlas, context-loss, or platform\
 driver compatibility. If a target cannot pass the accelerated path,\
 qualify a clearly identified Canvas mode against the actual workload\
 before treating it as an acceptable product mode.
 
+Declare the profile per engine revision. Servo panics on an unknown preference
+name, and names change between releases: 0.8.0 removed `layout_grid_enabled`
+and renamed four layout preferences, and main removed
+`dom_resize_observer_enabled` on 20 November 2026. Validate the profile against
+the pinned revision's preference table at build time. Confirm that the chosen
+Cargo feature set compiles WebGL at all; the `webgl` feature belongs to the
+crate's web-feature group and should be checked against the selected default
+features.
+[Servo experimental features](https://book.servo.org/design-documentation/experimental-features.html).
+
+Treat accelerated rendering as unproved. WebGL2 remains disabled by default at
+0.7.0, 0.8.0, and current main, with open gaps tracked upstream. A public
+report against the xterm.js demonstration describes working WebGL2 output in
+January 2025 and broken rendering, focus, and text input in December 2025, with
+no recorded resolution. Whether the pinned releases reproduce that failure is
+the first question for the terminal gate. xterm's WebGL renderer also
+rasterizes glyphs through a 2D canvas, so slow 2D canvas operations affect the
+accelerated path. IntersectionObserver is partial upstream and marked as a 1.0
+blocker. [WebGL2 tracking][servo-webgl2], [xterm.js on Servo][servo-xterm].
+
+The Canvas fallback has no upstream future. xterm.js 5.4.0 deprecated the
+unscoped `xterm` packages, and 6.0.0 removed the Canvas renderer addon in
+favour of WebGL and the built-in DOM renderer. Qualifying the locked 5.3.0
+stack remains the right first experiment because it is the shipped workload.
+Measure the DOM renderer as a third mode in the same runs: it needs neither
+WebGL2 nor a 2D canvas, and it is the fallback Velocetty inherits on any later
+xterm upgrade. [xterm.js 6.0.0][xterm-6].
+
 Run the exact locked xterm/addon combination before upgrading it. Test\
 WebGL2 glyph atlases, fonts, fractional DPI, combining characters,\
-wide characters, emoji, selection, cursor rendering, images, search,\
+wide characters, emoji, selection, cursor rendering, search,\
 hyperlinks, and long scrollback. Validate cell layout and terminal\
 contents as well as platform-specific screenshots. Do not require\
 identical subpixel rasterization across different operating systems.
@@ -190,10 +277,20 @@ those paths directly. A successful opaque WebGL terminal is not evidence\
 that transparent windows or ligatures work.
 [Terminal implementation](https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/lib/components/term.tsx).
 
+The locked ligatures addon (0.7.0) finds fonts through a Node module or the
+Local Font Access API. A browser-safe fixture in Servo has neither. Expect
+ligatures to be unsupported there until a host port supplies font data, and
+report that outcome explicitly.
+
 Hidden-pane Canvas fallback must preserve terminal state while avoiding\
 unnecessary painting. xterm's hidden-render optimization depends on\
 IntersectionObserver, so test the declared preference and its actual\
-behaviour. If it is unreliable, add an explicit application visibility\
+behaviour. Without the API, xterm 5.3.0 never pauses rendering, which wastes\
+work. An observer that reports a pane as hidden and then fails to report its\
+return would leave the renderer paused, which blanks a visible terminal;\
+test that case specifically. Both renderers also construct a\
+`ResizeObserver` unconditionally. If visibility reporting is unreliable, add\
+an explicit application visibility\
 adapter rather than assuming `display: none` eliminates browser work.\
 Test restoration from hidden/minimized state, font and DPI changes while\
 hidden, and release/reacquisition of WebGL contexts.\
@@ -214,7 +311,11 @@ text, candidate positioning, dead keys, AltGr, Ctrl/Alt combinations,\
 keybinding chords, paste, bracketed paste, focus changes, and terminal\
 search/palette interactions. Retain the command system's ownership of\
 shortcut resolution. Browser accelerators must not steal terminal input\
-that the application expects to receive.
+that the application expects to receive. xterm receives composition through\
+a hidden textarea, and an open Servo defect reports a spurious\
+`compositionupdate` when an input gains focus; include focus-only sequences\
+in the composition tests.
+[Servo composition defect](https://github.com/servo/servo/issues/49873).
 
 Check xterm's accessibility mode with actual screen readers, including\
 cursor movement, new output, focus announcements, and composition.\
@@ -262,7 +363,33 @@ according to the platform's supported mechanism. Use bounded frame sizes\
 and fair session scheduling so one noisy process cannot monopolize the\
 connection or the browser main thread. Give input, resize, close, and\
 control messages priority over bulk output. Browser `bufferedAmount`\
-alone is not an end-to-end consumption acknowledgement.
+alone is not an end-to-end consumption acknowledgement. In Servo it is not\
+a signal at all: the implementation resets the value to zero on the next\
+task because a background thread has already taken the bytes.
+
+Credit return is new frontend work. The pinned frontend calls
+`term.write(data)` without a completion callback. xterm also holds a hard-coded
+50 MB write buffer and discards data beyond it, so a missing credit scheme
+loses output silently under sustained load. Its flow-control guide recommends
+keeping the high watermark below 500 kB.
+[xterm.js flow control](https://xtermjs.org/docs/guides/flowcontrol/).
+
+Credits bound bytes; they do not bound script-thread time. Every terminal in a
+document parses on that document's one script thread, and each xterm instance
+drains its own write buffer in its own time slice. Many sessions flooding at
+once can queue one slice per session ahead of a keystroke, so input latency
+grows with the number of noisy sessions even while every byte budget holds.
+Whether Servo's task queue gives input priority over those slices is unverified.
+
+Give the frontend one write scheduler for the document. It owns every
+terminal's pending output, spends a fixed parse budget in each frame, serves
+the focused pane first, and yields to input between slices. State the credit
+windows as numbers once measured. Keep each session's window at or below
+xterm's 500 kB guidance. Derive the aggregate window from measured parse
+throughput multiplied by the agreed input-latency budget, so that draining a
+full window cannot exceed that budget. Each document opens one WebSocket
+connection, so the connection budget covers one window and the service budget
+covers them all.
 
 The protocol sketch does not already specify all of these credit,\
 generation, cancellation, or uncertain-outcome rules. Add them when\
@@ -301,6 +428,19 @@ grant; Origin alone does not authenticate a non-browser client. Put\
 credentials in the authentication exchange, not URLs, logs, or terminal\
 output.
 
+Specify the handshake before the service contract is frozen. A bearer grant
+sent in the first frame to whichever process holds the port is replayable: a
+local process that binds the port first, or races the service after a restart,
+receives the grant and can present it with a forged Origin. Use a challenge and
+response instead. The server sends a fresh nonce, and the client answers with a
+keyed digest over the nonce, the grant identifier, and the protocol version, so
+the grant itself never crosses the socket. The first client frame carries a
+protocol version, and the server rejects a version it does not implement with a
+structured error. Before authentication completes, bound the deadline, the
+frame size, and the number of unauthenticated connections. State the grant's
+lifetime as a number. Origin plus grant already defeats DNS rebinding from a
+remote page.
+
 The host registers a backend-side lease scoped to the backend instance,\
 permitted capabilities, session namespace, and native document/view\
 generation. The backend stores that mapping through a trusted control\
@@ -310,13 +450,35 @@ The WebSocket handshake proves possession of that scoped bearer grant\
 and supplies the browser Origin; it cannot independently recover Servo's\
 native document identity.
 
-On document retirement, the host revokes the lease over an authenticated\
+Key each lease by backend instance and document identifier. Revocation is
+idempotent. The application learns the document identifier and its retirement
+through the runtime's extension interface described under
+[contract adaptation](#document-identity-for-application-code); a Tauri command
+otherwise sees only a window label, which cannot scope a lease.
+
+Run the backend in a process separate from the engine. Servo is an in-process
+engine before its first stable release, and several known defects panic. A
+backend sharing its process would lose every PTY to any engine failure.
+Electron keeps PTYs in its main process, away from the renderer, so a shared
+process would be a regression the product has not accepted. Both the
+transitional Node backend and the Rust replacement therefore use a private
+inherited pipe or an equivalently authenticated local control channel. This
+constrains Velocetty's backend placement; the
+[terms of reference](terms-of-reference.md#open-decisions) record it for the
+maintainer's confirmation.
+
+Distinguish orderly retirement from abnormal host loss. On orderly\
+retirement, the host revokes the lease over the authenticated\
 supervisory channel. The backend rejects further commands and output on\
 every associated connection, closes them, and destroys their PTYs under\
-the existing lifecycle policy. An in-process Rust backend can use a\
-direct service call; the transitional Node backend needs a private\
-inherited pipe or an equivalently authenticated local control channel.\
-Loss of that host channel revokes its leases. Validate lease state at\
+the existing lifecycle policy. Abnormal loss of the host channel means the\
+engine process died without retiring its documents. The initial profile\
+treats that as revocation too, which destroys every session the process\
+owned. That is a product consequence: one engine failure ends every agent\
+session in every window. The alternative holds those sessions for a bounded\
+grace period so that a restarted host can reattach. It requires a\
+reattachment protocol that Velocetty does not have, and the maintainer\
+decides whether to adopt it. Validate lease state at\
 command admission and output delivery; already accepted side effects\
 cannot be undone by revocation. Bounded grant lifetimes and backend\
 instance identifiers prevent old credentials from gaining authority\
@@ -367,6 +529,19 @@ baseline exists. Set product promotion budgets from those measurements.\
 The current 500 ms fit/PTY-resize debounce also belongs to the application\
 path; separate it from engine resize latency when analysing results.
 
+Fix the measurement protocol before any Servo result exists, so that the result
+cannot shape it. Roadmap task 1.2.2 records the trace provenance and rates, the
+run and warm-up counts, one host-independent latency instrument, and the
+budgets agreed from an Electron run and an Electron-against-Electron noise
+floor. Report the 99th percentile, the maximum, and the count over a fixed
+threshold beside the median: the expected failures are tail stalls from context
+loss, parse starvation, and garbage collection, which a 95th percentile hides.
+A credit-driven replay is a closed loop, so a slower host receives fewer bytes;
+report achieved throughput beside latency and run a fixed-rate trace as well as
+a saturating one. Electron spreads work across several processes and Servo uses
+one, so compare proportional memory over the whole process tree and exclude the
+backend service from both.
+
 ### Follow the existing migration dependencies
 
 1. Prove the locked terminal renderer and a small React shell under\
@@ -403,6 +578,22 @@ line. Its packages have different alpha version suffixes, so pin the\
 workspace source revision and lockfile rather than inventing a shared\
 version number.
 
+Version 3 development happens on the upstream `v3` branch. The newest
+pre-release set, published on 6 November 2026, comprises `tauri` 3.0.0-alpha.6,
+`tauri-runtime` alpha.5, and `tauri-runtime-cef` alpha.7. No beta, release
+candidate, or stabilization date has been published. Between the pin and the
+branch head of 24 November 2026, the `tauri-runtime` sources changed by one
+line and the invoke script, channel implementation, and command-line runtime
+detection did not change. Advancing the pin to the alpha.6 set is therefore
+expected to be cheap; confirm it in the first build task.
+
+Open upstream proposals touch the areas this design adapts. They would turn the
+channel fetch command into a capability-gated core plugin, make the channel
+type opaque, add asynchronous window builders with a re-entrancy guard, and
+stop the CEF runtime waiting on queued main-thread getters. Treat the channel
+route and the CEF dispatch precedent as moving targets, and re-read them
+whenever the pin moves. [Tauri v3 branch][tauri-v3].
+
 Tauri 3 moves runtime selection into a runtime crate and exposes\
 runtime-specific operations through extension traits. Its runtime URL\
 hook removes the earlier assumption that custom-scheme representation\
@@ -414,13 +605,18 @@ instruction. [Tauri migration guide][tauri-migration-guide],
 [runtime guide][runtime-guide],
 [pinned runtime contracts][pinned-runtime-contracts].
 
-Expose a configuration and selection type named\
-`tauri_runtime_servo::Servo`, and a concrete implementation type named\
-`ServoRuntime<T>`. The engine type remains `servo::Servo`. The intended\
+Expose a configuration and selection type named `Servo`, and a concrete\
+implementation type named `ServoRuntime<T>`. The engine type remains\
+`servo::Servo`. The crate path shown below is provisional. Another project\
+published `tauri-runtime-servo` 0.1.0 on crates.io on 24 August 2026, and\
+the registry treats hyphens and underscores as the same name, so this crate\
+cannot be published as `tauri_runtime_servo`. Choose a publishable name, or\
+agree a shared one with that project, before any public release; see\
+[related work](#related-in-process-servo-runtimes). The intended\
 application shape is:
 
 ```rust
-// Proposed API shape; tauri-runtime-servo does not exist yet.
+// Proposed API shape; the repository currently contains a stub.
 tauri::Builder::default()
     .runtime(tauri_runtime_servo::Servo::default())
     .run(tauri::generate_context!())
@@ -433,13 +629,21 @@ Implement `Runtime`, `RuntimeHandle`, `WindowDispatch`,\
 runtime-specific extension traits for both the concrete runtime and\
 `DynRuntime`. Preserve the existing generic application/plugin model.
 
+The selection type must satisfy `Default + Send + Sync + 'static`. The runtime
+handle, both dispatchers, and the event-loop proxy must be `Send + Sync`, and a
+`with_webview` closure must be `Send` even though the value it receives need
+not be. The contract also requires a `webview_version` query and the DevTools
+methods regardless of feature selection, and passes GTK pointers as untyped raw
+pointers.
+
 At this revision, Tauri owns scoped event-listener registries. The runtime\
 emits the corresponding `RunEvent` values; it must not duplicate the old\
 Verso listener bookkeeping. `with_webview` receives a Servo-specific\
 wrapper on the owner thread. This wrapper is not a Wry object and need\
 not implement `Send`.
 
-Velocetty currently runs on Electron and does not supply an existing\
+The pinned Velocetty application runs on Electron and does not supply an
+existing\
 Tauri 2 compatibility obligation. Do not build a Tauri 2 adapter in the initial
 programme. If a consumer\
 requires one, add a distinct adapter over the same engine host and run a\
@@ -488,25 +692,91 @@ Retain applicable licence notices when copying isolated code. The\
 project should start with new architecture and contracts rather than a\
 renamed fork whose internal dependencies survive by accident.
 
+The Verso runtime has not changed since the audited revision of
+10 September 2026 and still targets Tauri 2.7. The original Verso repository
+was archived on 8 October 2025. A Tauri maintainer describes the runtime as
+outdated.
+
+### Related in-process Servo runtimes
+
+The design is not the first in-process attempt. The `copse-dev` project
+published a crate named `tauri-runtime-servo` in August 2026. It embeds
+libservo 0.5 in the application process, creates windows with Tao, targets
+Tauri 2.11, and replaces Tauri's invoke script to carry IPC. Its last commit
+dates from 21 September 2026 and it has no Tauri 3 port. It began as a Wry pull
+request; when closing that request, Tauri maintainers stated that an
+out-of-tree Servo runtime is their preferred direction because they lack the
+capacity to maintain one. No first-party Servo runtime was found.
+[copse-dev runtime][copse-runtime], [Wry discussion][wry-servo].
+
+| Related work                           | Disposition                                    | Reason                                                                                        |
+| -------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `copse-dev` window and engine hosting  | Audit before the host proof                    | It already hosts libservo in process and may answer surface and event-loop questions cheaply. |
+| `copse-dev` replacement invoke script  | Do not adopt                                   | A copied invoke script is the maintenance burden the transport-policy hook exists to avoid.   |
+| `copse-dev` request-body limitation    | Record as corroboration                        | It independently reports that interception omits request bodies.                              |
+| Published crate name                   | Resolve before any release                     | The registry name is taken; see [Tauri baseline](#tauri-baseline-and-compatibility-policy).   |
+| Collaboration with the existing author | Decide when recording the maintenance decision | Shared upkeep could reduce the patch burden; divergent Tauri majors and goals may prevent it. |
+
 ## Servo baseline, retained improvements, and required deltas
 
 ### Baseline and update policy
 
-Start from **Servo 0.7.0**, released on 5 October 2026, at commit
-`aac43a3f31a259f04a574f5ec4e959c943ad7cc7`. Maintain a small, reviewed patch
-queue for the embedding contracts this runtime requires. The comparison
-snapshot of Servo main is `69911d3671ff2c75fc0d12d2553718b16956a2b1`, dated
-29 October 2026. Pin the complete dependency graph and record the patches with
-the runtime release; do not follow a moving branch in application builds.
-[S1][s1], [S2][s2]
+Reproduce the October control with **Servo 0.7.0**, released on 5 October 2026,
+at commit `aac43a3f31a259f04a574f5ec4e959c943ad7cc7`. Maintain a small,
+reviewed patch queue for the embedding contracts this runtime requires. The
+comparison snapshot of Servo main is
+`69911d3671ff2c75fc0d12d2553718b16956a2b1`, dated 29 October 2026. Pin the
+complete dependency graph and record the patches with the runtime release; do
+not follow a moving branch in application builds. [S1][s1], [S2][s2]
+
+Servo published 0.8.0 on 9 November 2026 at commit
+`4e136d8ef31b7c4748fbfac606ca463f3efd7537`. It is the newest release. Its
+public embedding sources are identical to the comparison snapshot, so the
+snapshot findings in this document describe 0.8.0. It builds with Rust 1.99.1.
+At the first gate, compare its compiler, patch burden, and native launch
+against the control. Record a maintainable patch target before committing to
+the host. Keep each result associated with the release actually tested.
+[Servo 0.8.0 release](https://github.com/servo/servo/releases/tag/v0.8.0).
+
+Servo releases monthly and maintains a long-term support line. A new line opens
+every six months and receives security fixes only for an expected nine months,
+on a best-effort basis. The current line is 0.6, released on 29 September 2026.
+Its patch releases may carry Git dependencies and may not appear on crates.io.
+The 0.7.0 control is neither the current release nor a supported line, so it
+serves reproduction only. Choose the patch target between the current release
+and the 0.6 line. [Servo long-term support policy][servo-lts].
+
+Release 0.7.0 changed embedder contracts that the host must follow. It removed
+`WebView::set_throttled`, so throttling follows hide and show. It removed
+`notify_focus_changed` and `Servo::focus`/`blur`, so the embedder calls
+`WebView::set_focused`. It added `Servo::forward_accessibility_action`.
+Accessibility remains behind the `accessibility_enabled` preference.
+[September 2026 engine changes][servo-september].
 
 | Property                          | Inspected value                                         | Design consequence                                                 |
 | --------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
-| Release toolchain                 | Rust 1.97.1                                             | Use the release's pinned toolchain initially.                      |
-| Main toolchain                    | Rust 1.99.1                                             | A main-branch improvement may also require a toolchain update.     |
+| 0.7.0 toolchain                   | Rust 1.97.1                                             | Use as the upstream control build.                                 |
+| 0.8.0 and main toolchain          | Rust 1.99.1                                             | Adopting the current release also requires this compiler.          |
 | Main manifest MSRV                | Rust 1.88.0                                             | Distinguish declared MSRV from the release build toolchain.        |
 | Main rendering dependencies       | Surfman 0.14.0; WebRender 0.70.1; raw-window-handle 0.6 | Integrate through raw handles and the public rendering contract.   |
 | Main shell/example window library | Winit 0.30.13                                           | This does not require the runtime to use Servo's shell event loop. |
+
+The runtime workspace requires its dated nightly and Polonius flags. Build
+Servo alone with its release compiler as a control. Then compile and launch the
+combined dependency graph with the workspace pin. Record both compiler versions
+and target triples. An incompatible pair blocks host qualification until a
+reviewed pin or patch passes the same comparison.
+[Workspace toolchain](../rust-toolchain.toml), [Polonius policy](polonius.md).
+
+The workspace flags would otherwise apply to the whole Servo and mozjs graph:
+the nightly compiler, the Polonius analysis, and the development code
+generator. Each of the Makefile's flag sets is then a separate full engine
+build, and each nightly bump rebuilds all of it, while the patch series must
+still build on Servo's own compiler.
+[ADR 0002](adrs/adr-0002-toolchain-scope-for-the-engine-graph.md) proposes
+scoping the workspace flags to this project's crates and building the engine
+with its release compiler. The first build task measures both arrangements
+before the decision is accepted.
 
 The toolchain files and manifest establish these values. Core public method
 signatures in `servo.rs`, `webview_delegate.rs`, and `rendering_context.rs`
@@ -560,6 +830,15 @@ network implementation crates. A missing capability becomes a proposed public
 API and a reviewed Servo patch. The public `servo::protocol_handler` module
 currently exposes low-level networking types; its existence does not justify
 rebuilding the engine's fetch machinery in the runtime.
+
+The private adapter module is the engine host's only view of the patched
+engine. It exposes four internal ports: document bootstrap, page-to-host
+messages, document-targeted delivery, and local resources. Everything above the
+adapter depends on those ports and never on a patched Servo signature. When
+upstream ships its own message ports or bootstrap hook in a different shape,
+the change stays inside the adapter. The build asserts the expected Servo and
+Tauri patch-series revisions alongside the preference-table check, so a
+mismatched engine fails at compile time.
 [S4](https://github.com/servo/servo/blob/69911d3671ff2c75fc0d12d2553718b16956a2b1/components/servo/lib.rs)
 
 ### Available contracts and required additions
@@ -580,15 +859,32 @@ The public embedding surface and inspected implementations support this
 division. The proposed additions are design requirements, not existing Servo
 methods. [S4][s4], [S9][s9], [S10][s10], [S11][s11]
 
+The November validation found every listed gap still open at 0.7.0, the
+snapshot, 0.8.0, and main of 25 November 2026. Upstream activity is limited. A
+pull request adding bidirectional message ports to the embedding API has been
+open and awaiting a rebase since November 2025; its tracking issue last sought
+design feedback in June 2026, and reviewers noted that Servo has no isolated
+script worlds. A request for a Tauri-style bridge was closed as a duplicate of
+that issue. A pull request granting custom schemes a secure context was closed
+as stale in June 2026. No upstream work was found for document-start scripts,
+document-targeted evaluation, bounded shutdown, IndexedDB site data, or
+rendering-context replacement. Plan for a downstream patch series; do not plan
+around imminent upstream delivery. [Message-port proposal][servo-message-ports],
+[embedder messaging issue][servo-messaging-issue].
+
 #### Bootstrap and local-resource requirements
 
 Current user scripts run through `HTMLHeadElement::bind_to_tree`, which queues
 a task that executes when DOM script/layout safety blockers clear. This can run
 early during normal HTML parsing. It does not provide a universal
 document-created hook, a once-only guarantee, frame/origin selection, or an
-isolated execution world. The runtime needs a dedicated bootstrap contract
-instead of relying on head insertion timing.
-[S10](https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/script/dom/userscripts.rs)
+isolated execution world. `UserScript` accepts only a source and a file name,
+and manager updates take effect on the next reload. Scripts run in every frame,
+and an open defect reports that they panic the script thread in a sandboxed
+frame that disallows scripts. Embedder-originated JavaScript also runs
+regardless of the page's CSP or sandbox since 0.7.0. The runtime needs a
+dedicated bootstrap contract instead of relying on head insertion timing.
+[Sandboxed-frame defect](https://github.com/servo/servo/issues/48774). [S10](https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/script/dom/userscripts.rs)
 
 For local resources, use exact reserved HTTP(S) origins and a provider inserted
 at the HTTP transport boundary before DNS/TLS. Velocetty's initial profile uses
@@ -607,22 +903,36 @@ experimentally demonstrated vulnerability. Interception also accumulates chunks
 through an unbounded channel until completion, so its chunk API does not
 establish streaming or backpressure. [S11][s11], [S12][s12]
 
+Four further properties rule interception out even as a stopgap for privileged
+IPC. The intercepted request carries no body and no frame or document identity,
+so it cannot serve a binary invoke or attribute its caller. An embedder
+response replaces a network error that a request-side CSP or mixed-content
+check has already set. Intercepted responses bypass the step that assigns
+response tainting, so a cross-origin response may be exposed as a basic one.
+The interceptor is held under one asynchronous lock across the embedder round
+trip, which appears to serialize every intercepted fetch. The last three are
+inferences from source order; each needs a test before the provider design
+relies on the opposite behaviour.
+
 Custom protocols remain useful, but registering one does not establish a
-standard tuple origin. `ProtocolHandler::is_secure` documents only
-mixed-content treatment, and Servo's origin model delegates to the URL library.
-Implementing comprehensive custom-scheme origin semantics would touch more
-engine subsystems than a virtual HTTP(S) transport.
+standard tuple origin. A non-special scheme receives an opaque origin.
+`ProtocolHandler::is_secure` documents only mixed-content treatment; the
+secure-context check consults URL trustworthiness and never the protocol
+registry. Servo's origin model delegates to the URL library. Implementing
+comprehensive custom-scheme origin semantics would touch more engine subsystems
+than a virtual HTTP(S) transport.
 [S13](https://github.com/servo/servo/blob/69911d3671ff2c75fc0d12d2553718b16956a2b1/components/net/protocols/mod.rs)
 
 ### Lifecycle and platform limits
 
 Keep one `Servo` instance on the UI thread. Its handles use `Rc`;
-process-global options use a `OnceLock` that rejects a second initialization.
-Preferences also remain global. Public `spin_event_loop()` returns `()`. Final
-`ServoInner` drop sends shutdown and synchronously pumps until completion.
-Cancel runtime work, release webview/delegate references, and preserve surface
-lifetimes before allowing that final drop. Do not promise in-process recovery
-by rebuilding Servo after failure.
+process-global options use a `OnceLock`, and a second initialization panics; it
+does not return an error. Preferences also remain global. Public
+`spin_event_loop()` returns `()`. Final `ServoInner` drop sends shutdown and
+synchronously pumps until completion, with no timeout. Cancel runtime work,
+release webview/delegate references, and preserve surface lifetimes before
+allowing that final drop. Do not promise in-process recovery by rebuilding
+Servo after failure.
 [S9](https://github.com/servo/servo/blob/69911d3671ff2c75fc0d12d2553718b16956a2b1/components/servo/servo.rs)
 
 Rendering currently requires OpenGL/GLES methods. Attach refresh scheduling
@@ -639,9 +949,10 @@ can panic. Profile selection is engine-wide, and the public site-data
 categories omit IndexedDB. Finally, multiprocess compilation, process
 separation, and OS sandboxing are distinct: runtime multiprocess/sandbox
 options default to false, and current sandbox activation explicitly rejects
-Windows, ARM/aarch64, Android, iOS, RISC-V, and OHOS targets.
-Supported-platform claims must reflect these limits. [S9][s9], [S14][s14],
-[S15][s15]
+Windows, ARM/aarch64, Android, iOS, RISC-V, and OHOS targets. The aarch64
+exclusion covers Apple Silicon, so the sandbox is unavailable on current Mac
+hardware as well as on Windows. Supported-platform claims must reflect these
+limits. [S9][s9], [S14][s14], [S15][s15]
 
 Additional baseline references: [main manifest][main-manifest],
 [main toolchain][main-toolchain], [global options][global-options],
@@ -650,17 +961,41 @@ Additional baseline references: [main manifest][main-manifest],
 
 ## Component boundaries
 
-Start with three production crates and a test workspace. Keep components\
-as modules until an independently useful API justifies another crate.
+The table assigns responsibilities for the proposed runtime, engine host, and
+build companion. Start the host proof with private modules in the runtime
+crate. Split the host when an independent conformance executable needs it.
+Introduce the build companion when an installer needs its resource inventory.
 
-| Component                             | Owns                                                                                                                          | Must not own                                                        |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `tauri-runtime-servo`                 | Tauri trait implementations, configuration validation, ID translation, events, extension traits, IPC adaptation               | Browser UI, duplicated Tauri authorization, private Servo internals |
-| `servo-host`                          | One engine, native host loop, view registry, rendering surfaces, input conversion, document leases, resource-provider adapter | Tauri command semantics, arbitrary application business logic       |
-| `tauri-runtime-servo-build`           | Compatibility metadata, resource staging, native dependency inventory, packaging validation                                   | Unpinned downloads, application signing keys, runtime policy        |
-| Conformance applications and fixtures | Reproducible behavioural evidence and regression cases                                                                        | Production compatibility shims                                      |
+| Component                             | Owns                                                                                                                                 | Must not own                                                        |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `tauri-runtime-servo`                 | Tauri trait implementations, configuration validation, ID translation, events, extension traits, IPC adaptation                      | Browser UI, duplicated Tauri authorization, private Servo internals |
+| `servo-host`                          | One engine, native host loop, view registry, rendering surfaces, input conversion, document registrations, resource-provider adapter | Tauri command semantics, arbitrary application business logic       |
+| `tauri-runtime-servo-build`           | Compatibility metadata, resource staging, native dependency inventory, packaging validation                                          | Unpinned downloads, application signing keys, runtime policy        |
+| Conformance applications and fixtures | Reproducible behavioural evidence and regression cases                                                                               | Production compatibility shims                                      |
 
-`servo-host` is a workspace-private crate initially. It may depend on\
+Two downstream patch series are components in their own right. Applications
+build against the patched Tauri core, and the engine carries the patched Servo,
+so each series has an owner, a revision, and an upkeep decision.
+
+| Patch series | Owns                                                                                                      | Must not own                                                              |
+| ------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Servo series | The engine deltas this design requires, one purpose per patch, against one pinned release                 | Application-specific behaviour; changes to engine policy defaults         |
+| Tauri series | Document context through invoke, resolver, channels, and listeners; the runtime-trait additions they need | Servo-specific types; any change the Wry and CEF runtimes cannot build on |
+
+Dependencies point one way: application, patched Tauri core, runtime, engine
+host, then the `servo` facade. The host never names a Tauri type; it calls the
+runtime back through a port the runtime implements. The host defines
+`WindowKey`, `ViewKey`, and `DocumentToken`, because it owns the registry that
+backs them. The runtime defines `InvocationId` and `ResourceRequestId`. Tauri
+core sees a document identity only as an opaque value behind a trait with a
+default implementation, so other runtimes compile unchanged and core never
+depends on this crate.
+
+The engine host, the host loop, and `servo-host` name one component. This
+document calls it the engine host; `servo-host` is its crate name after
+extraction.
+
+Keep `servo-host` workspace-private after extraction. It may depend on\
 explicit public graphics/windowing crates such as Surfman and\
 raw-window-handle, but only the `servo` facade may provide engine\
 objects. It must not import constellation, script, layout, or internal\
@@ -796,6 +1131,36 @@ Recreating a page is not a valid implementation of a state-preserving\
 reparent operation. A software context supports selected headless\
 fixtures; it cannot establish real GPU-driver or compositor correctness.
 
+## Threat model
+
+The privileged document displays attacker-influenced bytes. A coding agent can
+print anything: escape sequences, links, titles, and image payloads. Those
+bytes reach the engine's text shaping, font handling, image decoding, WebGL
+texture uploads, and link handling.
+
+Servo runs in the application process. Its sandbox is unavailable on Windows
+and on every aarch64 target, including Apple Silicon, and this design does not
+enable it elsewhere. A memory-safety defect in the engine or its JavaScript
+engine therefore yields the user's full privileges: files, credentials, and
+every terminal session. Electron renders the same content in a sandboxed
+renderer process, so this is a reduction in defence in depth. The maintainer
+accepts that reduction explicitly, or the profile stays experimental.
+
+| Asset                         | Threat                                              | Defence in the initial profile                                                      | Residual risk                                      |
+| ----------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Native operations             | A non-application document invokes a command        | Engine-authenticated source identity and Tauri capabilities                         | Script already running in the authorized document  |
+| Pending privileged results    | A successor document receives a predecessor's reply | Validation of the target document on the script thread                              | None intended; proved by the navigation race tests |
+| Terminal service              | A local process or remote page connects             | Loopback binding, exact Origin, challenge and response, backend lease               | A process running as the same user                 |
+| The user's account            | Engine compromise through rendered terminal output  | Network allow-list, image addon disabled, prompt engine security updates            | Full user compromise; no sandbox                   |
+| Packaged origin and resources | A request escapes to the network or another origin  | Fail-closed reserved origins inside the fetch pipeline                              | Defects in the proposed provider                   |
+| Stored credentials            | Exposure through logs, URLs, or crash records       | Host-managed store; credentials excluded from URLs, logs, traces, and crash records | A compromised host process                         |
+
+The privileged view applies a fail-closed network allow-list: its reserved
+origins and the exact loopback service endpoint. It loads nothing else. The
+initial profile disables the terminal image addon, which removes image decoding
+of terminal-supplied data from the attack surface. Both restrictions are part
+of the engine profile and of the conformance evidence.
+
 ## Document bootstrap and trusted source identity
 
 Register bindings and all initialization scripts before a view's first\
@@ -819,6 +1184,16 @@ runtime never substitutes the destination URL, a JavaScript field,\
 `window.location`, a referrer, or the last top-level URL notification for\
 that source identity.
 
+Provenance identifies the realm that owns the binding it was called through. It
+cannot distinguish the top document from a same-origin descendant: a same-origin
+`about:blank` or `srcdoc` child can call `parent.ipc.postMessage`, and the
+engine reports the parent as the caller. Same-origin descendants of an
+authorized document are therefore inside its trust boundary. The
+main-frame-only rule stops the bridge being installed in a frame; it does not
+stop a frame the application created from reaching its parent. The packaged
+profile sets a `frame-src` restriction so that the application creates no
+frames it did not intend.
+
 `DocumentToken` is an opaque native capability to address a document,\
 not a secret that JavaScript can mint or a JSON structure that the host\
 deserializes. Its implementation includes engine-instance and\
@@ -827,7 +1202,7 @@ correlation ID, but the transport treats that diagnostic value as\
 untrusted.
 
 Before Tauri dispatches privileged work, the runtime checks the live\
-document lease and frame/origin policy. It then supplies the genuine\
+document registration and frame/origin policy. It then supplies the genuine\
 caller URI and token to Tauri's existing invoke handler. Tauri still\
 checks its invoke key and resolves permissions using the configured\
 window/webview capabilities. Source authentication complements those\
@@ -893,6 +1268,37 @@ and dynamic dispatch, and propagate the token through the core.\
 Preserve ordinary application-requested `Webview::eval` as an explicit\
 current-view operation.
 [Current channel implementation](https://github.com/tauri-apps/tauri/blob/78f49ba3993fed5a1b921235c547731006ad2a74/crates/tauri/src/ipc/channel.rs).
+
+The proposed operation has two outcomes, reported separately:
+
+```rust
+// Proposed shape; names are provisional.
+fn eval_script_for_document(
+    &self,
+    target: &DocumentToken,
+    script: String,
+    on_executed: Box<dyn FnOnce(Result<(), DeliveryError>) + Send>,
+) -> Result<(), AdmissionError>;
+```
+
+The return value reports admission: the queue accepted the work, or refused it
+for capacity or an already-retired target. The callback reports execution on
+the script thread, including `DocumentExpired`. Each admitted evaluation runs
+at most once. Evaluations for one document run in admission order, and in order
+relative to ordinary `eval` calls for the same view, because events and channel
+messages depend on that ordering. Tauri's invoke resolver returns nothing to
+its caller, so an expired delivery has no recipient: the runtime drops the
+reply, emits a structured trace event with the invocation identifier, and
+increments a counter. It never retries against another document.
+
+The bridge is not the only way to carry an invoke. Tauri's protocol route
+already separates JSON from raw bodies, and its reply returns through the
+fetch, which the engine binds to the initiating document without any new
+delivery operation. A third option removes the in-page Tauri bridge altogether
+and carries desktop services over the authenticated loopback service.
+[ADR 0001](adrs/adr-0001-desktop-service-transport.md) compares the three and
+proposes deciding between them before any engine patch is written. The
+remainder of this section specifies the native-bridge option.
 
 Channel payload caches must include view generation and document token\
 in their keys. A new document must not redeem an old payload using the\
@@ -1012,15 +1418,17 @@ Release configuration must reject a leftover development-origin grant.
 
 Use an explicit view/document lifecycle:
 
-| State or transition             | Required behaviour                                                                       |
-| ------------------------------- | ---------------------------------------------------------------------------------------- |
-| View allocated                  | No application IPC; all bootstrap and origin policy installed before load.               |
-| Initial empty document          | No privilege by default, even when it has an inherited origin.                           |
-| Authorized document created     | Mint its token and install its permitted bridge before author code.                      |
-| Same-document history change    | Retain the document token; use the current engine URL when policy is path-sensitive.     |
-| Cross-document navigation       | Retire the old lease and create a separate identity for the new document.                |
-| Frame detached or view replaced | Cancel pending delivery, subscriptions, and payload redemption for the retired identity. |
-| Closing or crashed              | Reject new work and settle native pending operations exactly once.                       |
+| State or transition                | Required behaviour                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| View allocated                     | No application IPC; all bootstrap and origin policy installed before load.               |
+| Initial empty document             | No privilege by default, even when it has an inherited origin.                           |
+| Authorized document created        | Mint its token and install its permitted bridge before author code.                      |
+| Same-document history change       | Retain the document token; use the current engine URL when policy is path-sensitive.     |
+| `document.open` on a live document | Retain the token only if the engine keeps the same document; otherwise retire and mint.  |
+| History entry restored from cache  | Treat as a new document: retire any retained registration and bootstrap again.           |
+| Cross-document navigation          | Retire the old registration and create a separate identity for the new document.         |
+| Frame detached or view replaced    | Cancel pending delivery, subscriptions, and payload redemption for the retired identity. |
+| Closing or crashed                 | Reject new work and settle native pending operations exactly once.                       |
 
 Default to denying remote top-level navigation inside privileged views.\
 The application can open ordinary external links through its configured\
@@ -1047,6 +1455,18 @@ Configure one persistent application-specific browser profile, or an explicitly\
 ephemeral engine-wide session, before constructing Servo. Acquire an\
 exclusive profile lock before any engine writes. The single-instance\
 plugin is optional application behaviour and does not replace this lock.
+
+Use an operating-system advisory lock that the kernel releases when the process
+dies. A lock expressed as a file's existence would survive a crash and block
+the relaunch, and this architecture makes crashes more likely than the Electron
+host did.
+
+Velocetty may not need a persistent browser profile at all. Its configuration,
+plugin storage, and credentials belong to the backend and the host-managed
+store. If the frontend keeps nothing in cookies or web storage, the reference
+application runs with the ephemeral profile, and the profile migration,
+rollback, and stale-lock hazards disappear for it. The native-service inventory
+answers this before any migration machinery is built.
 
 Ephemeral mode must not reuse a persistent `config_dir`. The inspected\
 network state loader/writer uses that directory for authentication,\
@@ -1115,6 +1535,25 @@ complete accessibility claim.
 
 ## Failure and shutdown semantics
 
+State the cost of each failure plainly. The engine, every document's script
+thread, and every window share one process.
+
+| Failure                        | What is lost                                           | What survives                                                                                                  | Recovery                                                   |
+| ------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| WebGL context loss in one pane | That pane's accelerated renderer                       | Terminal state, session, other panes                                                                           | Fallback renderer after xterm's wait; reacquire on restore |
+| Presentation surface loss      | Frames for one window until the surface is rebuilt     | Documents, sessions, other windows                                                                             | Rebuild the surface; report a terminal failure if it fails |
+| Document reload or navigation  | That document's sessions, under current product policy | Other windows and their sessions                                                                               | New document, new lease, new sessions                      |
+| Script-thread panic            | Unverified: possibly the whole process                 | Unverified                                                                                                     | Measured by fault injection before any privileged work     |
+| Engine panic or abort          | Every window and, by lease revocation, every session   | Backend process; backend-owned configuration                                                                   | Restart the application; sessions are gone                 |
+| Stalled engine shutdown        | Unfinished engine-owned writes, if the watchdog fires  | Sessions already settled; the profile lock stays held until the destructor returns or process exit releases it | Process-exit watchdog                                      |
+| Unknown preference at start-up | The launch                                             | Profile and previous bundle                                                                                    | Build-time preference validation; failed-launch counter    |
+
+The engine-failure row is the significant regression from the Electron host,
+where a renderer crash leaves PTYs alive in another process. Keeping the
+backend out of the engine's process preserves the PTYs; whether sessions then
+outlive the host is the reattachment decision recorded under
+[local service authentication](#authenticate-the-local-service-independently-of-tauri).
+
 An admitted native operation owns a one-shot completion. View retirement,\
 timeout, shutdown, or a disconnected worker resolves it once and removes\
 its registry entry. Dropping an internal request must not accidentally\
@@ -1123,7 +1562,7 @@ become network fallback or successful partial completion.
 Differentiate a requested close from destruction. Emit the Tauri\
 close-request callback before committing to closure, honour its veto,\
 and resolve any supported engine unload decision. Once closure commits,\
-stop admitting work, retire document leases, cancel resource requests,\
+stop admitting work, retire document registrations, cancel resource requests,\
 drop view handles, release their rendering contexts, and finally destroy\
 native windows. Emit destruction once. Application exit remains separate\
 from closing one window; a tray app may continue without a visible view.
@@ -1135,6 +1574,18 @@ ordinary teardown and exercise pending work. A bounded-shutdown claim\
 requires an explicit engine begin/poll/complete API; otherwise the alpha\
 documents the blocking limit. Never terminate an individual engine thread\
 and reuse its process state.
+
+Order application exit so that a stalled destructor cannot cost settled
+sessions or flushed runtime-owned state. A watchdog exit can still lose
+unfinished engine-owned writes. First settle or hand back terminal sessions
+through the backend. Then flush runtime-owned state. Then drop the final engine
+handle, and release the profile lock only after its destructor has returned,
+because the engine's own writers, such as the network state writer, may persist
+into the profile until then. Arm a watchdog when the handle is dropped: if the
+destructor has not returned within a declared interval, exit the process, which
+releases the advisory lock. Exiting a process is safe where terminating one
+engine thread is not, because nothing reuses the process state. Record the
+observed teardown time and every watchdog firing.
 
 On a view crash, show or emit a recoverable error only if the engine\
 remains in a verified usable state. A fatal engine failure requires\
@@ -1156,6 +1607,24 @@ where the engine supplies the necessary admission point; reject excess\
 work rather than accumulating unbounded queues. Permit explicit app\
 configuration and test it. Do not impose a universal command-execution\
 timeout on legitimate long-running application work.
+
+These defaults do not yet compose. One view's 128 pending invocations at 1 MiB
+each equal the whole aggregate budget, and two maximum responses exhaust it, so
+one window can starve nine others. Add a per-view byte quota below the
+aggregate, and reserve a share of the aggregate that no single view can
+consume. The aggregate also understates resident memory. A buffered response
+exists in Tauri's handler, in the runtime's copy, in Servo's accumulation, and
+in the script's buffer, so plan for roughly three to four times the nominal
+figure until measurement replaces the estimate.
+
+The runtime owns aggregate admission for its command and resource paths across
+all windows. Charge queued and in-flight bytes until the final consumer
+releases them. Reserve scheduling capacity for cancellation, close, and engine
+progress even at the data limit. The terminal service owns a separate budget
+across its connections. Charge output against both session and service limits
+until the agreed acknowledgement. Exercise a stalled consumer and a second
+interactive window, then close both. Measure peak outstanding bytes, close
+latency, and recovery of credit before accepting defaults.
 
 ## Diagnostics and developer experience
 
@@ -1179,6 +1648,25 @@ debugging capability and enabling a listening endpoint are separate\
 settings. Do not promise an in-app Chromium DevTools panel or Chrome\
 DevTools Protocol compatibility.
 
+Tracing serves a developer at the machine. The maintainer also needs to learn
+of failures on other people's machines without collecting terminal contents.
+Install a panic hook that writes a bounded local crash record: runtime, engine,
+and patch-series revisions, target, GPU and driver, the failing thread, and the
+panic location. It contains no terminal contents, command bodies, paths under
+the user's home, or credentials. At the next launch the application offers to
+submit it; nothing leaves the machine without consent. Provide a user-triggered
+diagnostics bundle with the same exclusions and the capability report.
+Libraries must not install global hooks, so the application installs this one
+at its composition root.
+
+Four artefacts carry these facts, and each has one meaning. The *compatibility
+manifest* declares what a build is: its revisions, patch series, features, and
+supported operations. The *capability report* is the manifest's
+supported-operation list as the running build reports it. An *evidence record*
+holds the outcome of each conformance gate for one build and target. A *crash
+record* describes one failure on one machine. The [context](context.md) defines
+them for the whole documentation set.
+
 ## Packaging and upgrades
 
 Bundle the engine selected by the application. Use the public Servo\
@@ -1200,7 +1688,13 @@ Publish one compatibility manifest containing:
 
 - Servo release, base SHA, patch-series revision, and feature selection.
 
-- Tauri workspace SHA and frontend package versions.
+- Tauri workspace SHA, Tauri patch-series revision, and frontend package
+  versions.
+
+- A schema version for the manifest itself.
+
+- The product-subset inventory: every runtime operation, plugin command,
+  event, and protocol form, each marked required, unsupported, or excluded.
 
 - Rust toolchain, target triple, native ABI baseline, and compiler/linker\
   settings that affect distributed artefacts.
@@ -1214,6 +1708,15 @@ toolchain, target, and dependency graph. Initially reuse ordinary Cargo\
 caches and trusted native dependency binaries. A stable C ABI or dynamic\
 engine SDK would be another project, not a packaging shortcut.
 
+The Tauri series changes types that every application and plugin compiles
+against. An application therefore builds against the patched core through a
+Cargo `[patch]` section that names the pinned revision of the series; the
+runtime crate alone is insufficient. The Wry and CEF runtimes must still build
+against the patched traits, which the series' own checks verify. Rebase the
+Tauri series whenever the pin moves, and classify each patch as an upstream
+candidate or a permanent carry. Tauri accepts contributions that Servo's policy
+excludes, so the upstream-candidate class is real for this series.
+
 `build.rs` validates and stages prepared inputs. An explicit preparation\
 command may fetch versioned artefacts with digest verification and a\
 clear offline mode. Reproducible builds must not silently fetch the latest\
@@ -1226,20 +1729,65 @@ code signing, notarization, and the entitlements established by tested\
 builds. Do not copy Chromium's entitlement list without validating Servo's\
 requirements. Test installation and launch outside a developer checkout.
 
+Stage an update beside the last working bundle. Under the exclusive profile
+lock, check the stored format against the candidate manifest before the first
+write. If migration is required, checkpoint the profile and retain the matching
+old bundle until candidate launch and profile health checks succeed. On
+interruption, recover one compatible bundle/profile pair. Exercise interruption
+before and after the first migrated write and verify the previous user data on
+restart. Stop an incompatible downgrade before opening the profile for writes.
+
+Define health so that recovery has a trigger. A launch is healthy when the
+first frame is presented, the bootstrap grant is redeemed, and one terminal
+session echoes input. Before initializing the engine, increment a failed-launch
+counter in a file outside the browser profile; clear it when the launch becomes
+healthy. When the counter reaches its limit, start the retained bundle, or
+start a safe mode that selects the DOM renderer and software rendering. An
+engine update that fails graphics initialization on one driver family then
+degrades to a working terminal instead of a launch loop.
+
+### Engine security policy
+
+A bundled engine makes the application responsible for the engine's
+vulnerabilities. Servo publishes monthly, the support line receives best-effort
+security fixes for about nine months, and the 0.6 line therefore expires around
+June 2027. The patch series cannot go upstream, so every engine update is a
+rebase.
+
+- The workshop watches Servo and SpiderMonkey advisories and each monthly
+  release, and reports findings to the maintainer on a fixed cadence.
+- The maintainer declares a patch-latency budget: the longest interval
+  between an upstream security fix and a released build containing it. The
+  carry rehearsals measure whether the team can meet it.
+- The update manifest is signed and carries a minimum safe version, so an
+  installed build learns that it has been withdrawn.
+- Withdrawal has a destination. While the Electron host remains shippable,
+  withdrawing a Servo build means updating its users to the Electron build.
+- If the budget is exceeded, or the maintainer is unavailable beyond it, the
+  profile reverts to experimental and receives no new installations.
+
 Track Servo security updates independently of feature work. Keep engine\
 changes as a small, documented patch series with one purpose per patch\
 and upstream tracking where appropriate. Rebase through the conformance\
-suite. Compare a current monthly release with an LTS option when their\
-required embedding contracts match; do not freeze an obsolete engine\
-merely to avoid adapter maintenance.
+suite. Compare a current monthly release with the long-term support line\
+when their required embedding contracts match; do not freeze an obsolete\
+engine merely to avoid adapter maintenance. A support line receives\
+best-effort security fixes for about nine months and may depend on Git\
+sources, so following it still means a rebase at least twice a year and a\
+dependency policy that admits pinned Git revisions.
 
 Servo's current contribution policy excludes LLM-generated code,\
-documentation, issues, and comments. Therefore upstream acceptance is a\
+documentation, issues, and comments, with an exception for minimized test
+cases. Therefore upstream acceptance is a\
 delivery dependency that cannot be satisfied by submitting this generated\
 design or generated patches. Arrange contributions that comply with the\
 project's policy, or explicitly fund and maintain a downstream patch\
-series. This affects the maintenance plan, not the feasibility of an\
-independent runtime.
+series. At df12 Productions, the sole human maintainer decides which patches to
+carry and whether to release the combined graph. The agent workshop can prepare
+and exercise the candidate. Rehearse one security update, time the rebase and
+conformance run, and demonstrate recovery of the previous compatible
+bundle/profile pair. Keep the profile experimental if that work lacks an owner
+or exceeds the release owner's agreed update window.
 [Servo contribution policy](https://book.servo.org/policy/ai-usage.html).
 
 ## Required engine and core work
@@ -1265,12 +1813,29 @@ These are proposed changes, not claims that upstream has accepted their\
 names or signatures. Keep them generic enough for other embedders, but\
 prove them with concrete Tauri scenarios before generalizing their APIs.
 
+Every Servo row is a permanent downstream carry under the current contribution
+policy unless the maintainer writes and submits it personally. Each Tauri row
+is either an upstream candidate or a permanent carry, and the maintenance
+decision classifies it. The Tauri rows touch the invoke, resolver, and channel
+code that open upstream proposals are changing, so expect them to conflict at
+each pin move. The error-reporting row needs no core change if the runtime
+publishes its own error type, as
+[contract adaptation](#document-identity-for-application-code) describes.
+
+The table is the cost of the native-bridge option. Carrying invoke on the
+protocol route removes the messaging and transport-policy rows and leaves
+targeted delivery for events alone. Carrying desktop services over the loopback
+service removes every row above the shutdown row.
+[ADR 0001](adrs/adr-0001-desktop-service-transport.md) records the comparison.
+Spike each delta that the chosen option retains before accepting its upkeep:
+record the engine subsystems it touches and its size, then carry the smallest
+one across a release.
+
 ## Contract adaptation notes
 
-**Status:** specification only. `proposed-contracts.rs` names intended seams;
-it does not reproduce existing public Servo or Tauri APIs, and it has not been
-compiled. The inspected Tauri baseline is commit
-`78f49ba3993fed5a1b921235c547731006ad2a74` on the v3 branch.
+The names below describe proposed interfaces. The pinned Tauri contract is
+commit `78f49ba3993fed5a1b921235c547731006ad2a74`. Qualification requires a
+compiled adapter and the behavioural evidence specified below.
 
 ### Trusted document identity
 
@@ -1310,6 +1875,44 @@ rejects further ingress from that document. It cannot reverse a Rust command's
 completed effects. Cancelling application work requires a separate cooperative
 mechanism. Rust-created channels should offer an explicit document-targeted
 constructor.
+
+On the protocol route, Tauri core currently takes the caller from the request's
+`Origin` header. `SourceContext` must override that header wherever core
+derives a caller, or a forged header would defeat the engine's identity.
+
+### Document identity for application code
+
+Application code needs two things the pinned contract does not provide. A
+command must learn which document invoked it, and the application must learn
+when that document retires. Without them the backend lease cannot be scoped or
+revoked, because a command sees only a window label.
+
+Expose both through the runtime's extension trait:
+
+- A command can read a redacted document identifier for its invocation. The
+  identifier is stable for the document's life, unique within the process, and
+  never accepted as authority on any inbound path.
+- The application can register a document-retired observer. The runtime
+  delivers each retirement exactly once, on the owner thread, and before the
+  successor document's bootstrap runs. An observer registered after a
+  retirement does not receive it.
+
+The same trait carries the capability query. A typed enumeration names each
+optional operation, and `supports(capability)` answers before the application
+depends on it. Calling an unsupported method that returns `()` emits a
+structured warning and increments a counter; a strict mode turns that into a
+panic for conformance runs. Tauri's runtime error type is non-exhaustive and
+creation errors are boxed, so the runtime publishes its own downcastable error
+type for unsupported operations, expired documents, and capacity. That needs no
+change to Tauri core and shrinks the Tauri series.
+
+### One completion type
+
+Every admitted native operation holds one value of a single completion type.
+Completing it consumes the value and removes the registry entry. Dropping it
+without completing resolves the operation as cancelled. Invocations and
+resource requests share the type, so “exactly one terminal outcome” is enforced
+by ownership.
 
 ### Bootstrap and transport
 
@@ -1354,269 +1957,57 @@ for required methods whose signatures return no result.
 
 ## Conformance and release gates
 
-This section defines proposed acceptance criteria. No implementation tests have
-run. A release claim requires evidence for the exact Tauri revision, Servo
-revision, runtime revision, build configuration, and target platform.
-Successful compilation establishes API compatibility only; it does not
-establish browser policy, native integration, or lifecycle correctness.
+The [conformance gates](conformance-gates.md) define the acceptance criteria
+for every claim in this design. Each gate has a stable identifier, an evidence
+mode, and a place in an evidence record. No implementation tests have run.
 
-The accompanying `conformance.toml` contains the normative checklist. The
-general runtime stages inherit their predecessors. Velocetty may establish a
-separately named verified subset after stages P and H plus every security,
-lifecycle, native, and transport case applicable to its declared surface; this
-does not claim complete stage A conformance. Conditional groups identify
-applicable exercises explicitly: JSON-only invoke and native-events-only
-support do not imply binary invoke or channels. Completing every Tauri channel
-API must not precede the terminal proof. Stage C comprises independent future
-capability gates. A successful no-op or fabricated empty result cannot
-substitute for an unsupported-operation error.
+Gates are grouped into stages by the claim they support: P for the terminal
+stack in the engine, H for the native host, V for the verified product subset,
+B for a supported desktop candidate, and A and C for the general runtime and
+further capabilities. Stages A and C have no consumer and are not planned work.
+The stages are not a delivery order. The [roadmap](roadmap.md) is the only
+delivery order, and the gates document maps each stage to its roadmap steps.
 
-### Stage P: Velocetty engine and protocol proof
+## Decision gates
 
-Use Velocetty revision `40949b2f4b266d8523d6ffe680f1dbc53ad9b541` and its
-actual locked dependencies: xterm 5.3.0, WebGL addon 0.16.0, and Canvas addon
-0.5.0. Extract a browser-safe fixture with explicit host ports; do not attempt
-to run Electron imports or privileged legacy plugin hooks inside Servo.
-Preserve the chosen frontend assets and record any deliberate fixture
-differences.
+Three decisions determine whether the next investment is justified. Each has a
+roadmap task that records it.
 
-Prove WebGL2 rendering, Canvas fallback, ResizeObserver delivery, visibility
-and context-pool transitions, context loss/recovery, font metrics, Unicode,
-selection, keyboard modifiers, IME, and screen-reader behaviour. Exercise
-several xterm panes inside one document; these panes do not require native
-child webviews. Test image, search, link, and ligature addons only with their
-declared support policy, reporting unsupported features explicitly.
+The first is whether Servo can satisfy Velocetty's terminal rendering and input
+requirements. A stock engine answers the cheapest form of that question before
+any adapter exists.
 
-Start with recorded output and a controlled server, then test the planned
-protobuf/WebSocket service on the existing Node backend before replacing its
-PTY implementation with Rust. Verify binary frames, split UTF-8 sequences,
-session multiplexing, resize/close ordering, and authentication from the
-production application origin under ordinary CSP and connection policy. The
-local backend must authorize PTY access independently of Tauri invoke
-permissions. Do not disable browser policy or treat loopback as authentication.
+The second is whether the investment is worth making. It weighs the measured
+benefit named in the
+[terms of reference](terms-of-reference.md#motivation-and-stop-criteria)
+against the measured cost of carrying the patch series, after the host proof
+and the carry rehearsal and before any privileged work.
 
-Test the complete backend lease lifecycle: a one-use, scoped bootstrap grant
-binds a frontend connection to a backend lease through the trusted host
-supervisory path. Document retirement or loss of the host control channel must
-revoke grants and leases, reject further work and output, close frontend
-connections, and destroy their sessions. Race revocation against grant
-redemption and pending work. Restarting the backend must invalidate every grant
-and lease issued by its previous instance. These obligations apply to the Node
-service proof without requiring the later Rust replacement.
+The third is whether the engine and core privilege contracts can be delivered
+and maintained, confirmed by rebasing the privileged series across a release.
 
-Bound output by byte credits and queue limits; return consumption credit after
-xterm's parse/write-completion callback, not merely after WebSocket receipt.
-Preserve immutable source output and its ordering as untrusted data: titles,
-links, image payloads, and terminal control sequences must not acquire native
-authority. Keep input and lifecycle commands responsive while another pane
-floods output. Measure actual PTY-to-parse/render and input-to-backend latency
-on native GPUs. Velocetty's deterministic synthetic benchmark remains a
-contract fixture and cannot satisfy these measurements.
+If any fails, stop at the corresponding prototype. Do not recover apparent
+compatibility by synthesizing origins, loosening capabilities, or allowing
+results to follow an unrelated document.
 
-### Stage H: host proof
+Do not estimate total throughput, memory savings, startup improvement, or
+delivery dates from architectural shape alone. Measure one, two, and ten
+windows; idle and animation workloads; startup to first usable frame; invoke
+latency; resource-buffer peaks; GPU memory; and teardown latency. Compare the
+same fixture and build mode under Electron, Servo, and the Tauri CEF and Wry
+runtimes, while recording the different process accounting. The CEF runtime is
+the null hypothesis: it offers the same Tauri integration with a mature engine
+and no engine patches.
 
-Build one process-owned Servo instance and two independently controlled native
-windows. Load packaged fixtures without installing privileged IPC. Prove
-resize, presentation, navigation, input, focus, IME, and orderly close. Close
-the first-created window while the second remains usable, then create another
-window from an application callback. Verify that window destruction cannot
-invalidate another window's surface, renderer, or engine ownership.
-
-Exercise minimize, occlusion, restore, zero-sized surfaces, DPI changes,
-display disconnection, and surface recreation. Rendering must recover or report
-a terminal failure without presenting another view's content. Input routing
-must preserve physical and logical coordinates, modifiers, pointer capture, and
-IME composition. The event loop must wake for work, remain idle without
-continuous repainting, and preserve window responsiveness during animation and
-command bursts.
-
-Test native GPU paths on every claimed platform. Headless rendering and
-software rasterization provide useful additional evidence but cannot satisfy
-native presentation gates. Record GPU, driver, window system, scale factors,
-and display configuration with failures.
-
-### Stage A: complete general runtime alpha
-
-Support two top-level windows, one browser profile, packaged content, bounded
-binary custom-protocol requests, and the complete chosen invoke/channel
-transport. This surface is broader than Velocetty's first verified subset.
-Reject independent child-view creation, conflicting browser-profile settings,
-per-view incognito, and unsupported configuration before loading a privileged
-page. This restriction permits the proposed single engine-wide ephemeral
-profile; it does not promise isolated per-view storage. Velocetty's terminal
-profiles select shells and environments; they are not browser profiles.
-
-**Initialization and document identity.** Prove that required initialization
-executes before the first author script in every document eligible for the
-bridge. Cover initial empty documents, reload, redirects, same-document history
-changes, new documents, iframe creation, `srcdoc`, `about:blank`, blob
-documents, and restored history entries where supported. Assert the declared
-frame policy for each case: required initialization for eligible documents, and
-bridge absence for ineligible documents. A frame must not acquire privilege
-merely by inheriting a URL, sharing a parent, or requesting an application
-asset.
-
-Use engine-issued frame and document identities. Queue replies while
-navigating, destroying frames, replacing windows, and recycling registry slots.
-Servo must validate the target at actual script execution or message delivery.
-A check on the UI thread before enqueueing is insufficient. Old replies,
-events, and channel data must never reach a replacement document, even when it
-uses the same URL and callback number.
-
-**Authorization and protocol policy.** Attack the local-origin provider with
-forged `Origin`, `Referer`, `Host`, invoke-key, and callback headers; missing
-or opaque origins; remote frames; redirected requests; conflicting scheme
-registrations; and canonicalization variants involving case, trailing dots,
-ports, userinfo, encoded separators, and traversal. Authorization must use
-trusted initiating context and Tauri's capability checks. Requests for
-registered application origins must never fall through to DNS or the network.
-Unprivileged requests must remain unprivileged when their destination is a
-local asset.
-
-Verify ordinary fetch policy across local and network resources: CSP, CORS and
-preflight, credentials, redirects, MIME handling, caches, and any enabled
-service-worker interception. Test `GET`, `HEAD`, byte ranges, and binary `POST`
-bodies against the same protocol contract. Exercise every declared byte limit
-at the boundary and one byte beyond it, including empty bodies and arbitrary
-non-UTF-8 data. Reject overflow deterministically; never truncate a request or
-encode its body into a header. Cancellation and handler failure must complete
-or abandon requests according to the contract without leaving an unlimited
-pending map.
-
-**Invoke, channels, and events.** Use a fixture command with an observable
-counter to detect duplicate dispatch. Force failures before dispatch, after
-acceptance, during transport completion, and after the command's side effect.
-An uncertain outcome must not trigger automatic resend. Return the declared
-uncertain-outcome error; callers may retry only when their application contract
-provides idempotency. Losing the originating document cancels delivery and
-document-scoped subscriptions; it cannot promise rollback of accepted external
-work.
-
-Test success and error results, binary payloads, Unicode, malformed messages,
-invalid callback IDs, channel setup and closure, cross-window routing, and
-application events. Flood each bounded queue, stall consumers, close documents
-with queued messages, and verify the declared overflow policy and ordering
-within each channel. Enforce both message-count and byte limits where
-applicable. Event listeners must unsubscribe on document destruction. Test that
-high-volume delivery does not starve native input or engine updates.
-
-**Re-entrancy and failure.** Application callbacks must query windows, create
-windows, request close, and enqueue engine work without deadlock. Hold no
-registry lock or mutable engine borrow across those callbacks. Same-thread
-dispatch must respect the distinction between safe native queries and deferred
-engine operations. Exercise handler panics, dropped response receivers, engine
-shutdown, and partially created windows. Every accepted request must reach a
-documented terminal state; shutdown must not wait indefinitely for a callback
-that requires the stopped event loop.
-
-### Stage B: supported desktop application candidate
-
-Run native integration and accessibility tests for each claimed operating
-system and window system. Verify macOS titlebar/control integration and
-Windows/Linux frameless drag, resize, focus, and control behaviour. Check
-menus, accelerators, supported tray behaviour, focus restoration after dialogs,
-clipboard text/file lists, paste ordering, external-link policy, drag and drop,
-native handles, and application exit vetoes. Check keyboard-only navigation,
-accessible names and roles, focus announcements, text editing, selection, and
-dynamic updates with the target screen reader. A missing accessibility path
-prevents a supported desktop claim for that target.
-
-Velocetty is the primary application fixture. Verify tabs/splits, terminal
-buffers and input bytes, sustained output, fallback rendering, clipboard
-sequencing, links, configuration changes, and `ready`, session-add,
-session-exit, and update-availability flows. Compare the protocol-backed Node
-implementation with the Rust replacement using the same corpus. Differences
-require adjudication against the declared contract. Generic React and SolidJS
-applications may extend later coverage; they cannot replace the terminal
-acceptance suite.
-
-Preserve Velocetty's existing policy that subsequent document reload and window
-teardown destroy their sessions unless a separate product decision specifies
-detach/reattach. Test duplicate close, late output, cancellation, process exit,
-and uncertain spawn/write/restart outcomes without automatic replay. Preserve
-backend-owned JSON5 configuration and plugin paths; do not require
-browser-database persistence for product behaviour that does not use it. Any
-claimed browser persistence, clearing, or profile locking still needs its own
-tests.
-
-Exercise packaged binaries on clean machines, including signing where claimed.
-Test matched app/runtime/engine/resource installation, interrupted updates,
-failed first startup, and recovery to a compatible prior package. Recovery does
-not promise live-session or scrollback restoration. Release builds must disable
-development endpoints; debug grants must name their exact development origin.
-Record startup, idle CPU, memory, frame timing, and command latency; declare
-budgets from real application measurements before promotion.
-
-### Stage C: additional capability gates
-
-Independent child views require bounds, clipping, z-order, focus, input,
-destruction, and reparenting tests. Profile isolation requires adversarial
-separation of cookies, storage, credentials, permissions, caches, and clearing
-operations. An out-of-process engine requires an independently reviewed
-protocol, cancellation and crash recovery, native surface ownership, version
-negotiation, and demonstrated sandbox restrictions on each supported target.
-Process separation alone does not satisfy the sandbox gate.
-
-Publish a release evidence packet containing the checklist outcomes, exact
-revisions, target configurations, test logs, captured failures, explicit
-exclusions, and measured budgets. Run the affected conformance subset for every
-engine/core update, and the complete supported profile before release. Do not
-claim an untested target from another platform's success.
-
-## Implementation order and decision gates
-
-**Terminal engine proof:** run Velocetty's exact locked xterm/addon stack\
-and a representative React shell under Servo. Verify WebGL2 with explicit\
-preferences, Canvas fallback, hidden-pane behaviour, IME, and binary\
-WebSocket policy before building a large Tauri adapter. Use recorded\
-terminal data first; then exercise the Node backend service once\
-Velocetty's planned protocol shell exists.
-
-**Host proof:** build the selected Servo/Tauri/tauri-winit combination,\
-create two native windows from one engine, exercise native handles,\
-input, resizing, redraw, close veto, and teardown. Render inert test\
-content without exposing application IPC. This validates the platform and\
-graphics boundary before adding privilege.
-
-**Minimum privileged bridge:** implement and test document bootstrap,\
-authenticated native messages, normal-policy local resources, and\
-document-bound JSON bootstrap/native-service results. Exercise the events\
-and plugin operations actually needed by Velocetty, CSP, packaged assets,\
-and backend lease retirement together. Keep PTY/backend traffic on its\
-separate WebSocket contract. Publish the verified product subset and its\
-explicit exclusions; comprehensive Tauri channels are not a prerequisite\
-unless a chosen product dependency uses them.
-
-**Velocetty desktop candidate:** complete the browser-safe frontend and\
-native host ports, qualify the established backend contract under Servo,\
-and only then replace Node PTY services with Rust behind that contract.\
-Verify terminal lifecycle parity, JSON5 paths, plugins, menus, dialogs,\
-clipboard, accessibility, native installers, and updates on each claimed\
-platform. Record real performance baselines and failure behaviour. A\
-platform enters the support matrix only when its evidence exists.
-
-**General runtime alpha:** extend the tested product subset to the full\
-chosen binary invoke, channel, event, and custom-protocol contracts in\
-stage A. Make the broader compatibility claim only after that suite passes.
-
-**Broader runtime support:** add independently bounded child views,\
-reparenting, further plugin classes, isolation-pattern support, storage\
-partitions, or isolated engine processes as separate features. Each must\
-remove a declared limitation and pass a corresponding contract suite.
-
-Do not estimate total throughput, memory savings, startup improvement, or\
-delivery dates from architectural shape alone. Measure one, two, and ten\
-windows; idle and animation workloads; startup to first usable frame;\
-invoke latency; resource-buffer peaks; GPU memory; and teardown latency.\
-Compare the same fixture and build mode under Servo, Wry, and CEF where\
-practical, while recording the different process accounting.
-
-The first product decision gate is whether Servo can satisfy Velocetty's\
-terminal rendering and input requirements. The next is whether the\
-engine/core privilege contracts can be delivered and maintained. If\
-either fails, stop at the corresponding prototype.\
-Do not recover apparent compatibility by synthesizing origins, loosening\
-capabilities, or allowing results to follow an unrelated document.
+If engine or privilege qualification stalls, Velocetty can ship its
+browser-safe frontend and backend protocol on its existing Electron host while
+keeping the inert Servo harness. This preserves product delivery and provides a
+comparison workload. It retains Electron distribution costs and requires
+maintaining fixtures for both hosts. A standing gate keeps that fallback
+shippable: the Electron host runs the same frontend against the same service at
+each product-subset and release evidence record. Reopen Servo promotion when
+the failed gate has reproducible evidence on the proposed shipping
+configuration.
 
 ## Open decisions and evidence required
 
@@ -1625,13 +2016,20 @@ the following choices with evidence rather than implicit fallbacks.
 
 | Decision                           | Initial position                                                                               | Evidence required to finalize it                                                                                       |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Exact Servo/Tauri/host release set | Servo 0.7.0 plus a small patch series; pinned Tauri 3 and `tauri-winit` sources                | Build and native launch on each claimed target; dependency and ABI reconciliation.                                     |
-| Terminal graphics profile          | Explicit WebGL2 and IntersectionObserver settings; tested Canvas fallback                      | Locked xterm corpus, context-loss recovery, native input/accessibility, and measured resource budgets.                 |
+| Exact Servo/Tauri/host release set | Servo 0.7.0 control; patch target chosen between 0.8.0 and the 0.6 support line; Tauri alpha.6 | Build and native launch on each claimed target; dependency and ABI reconciliation.                                     |
+| Published crate name               | Provisional `tauri_runtime_servo`; the registry name belongs to another project                | A publishable name, or an agreement with the existing author, recorded before any public release.                      |
+| Terminal graphics profile          | Per-revision WebGL2 and IntersectionObserver settings; Canvas and DOM renderer fallbacks       | Locked xterm corpus, context-loss recovery, native input/accessibility, and measured resource budgets.                 |
 | Privilege API delivery             | Public engine bootstrap, source identity, exact-document delivery, and normal-policy resources | Agreed API shape or maintained downstream patch ownership; negative tests at each boundary.                            |
 | Product native-service subset      | Implement the operations selected by Velocetty's host ports                                    | Inventory every direct Electron/Node dependency and chosen Tauri plugin; reject undeclared requirements before launch. |
 | Queue and performance budgets      | Bounded queues with conservative configurable defaults                                         | Actual terminal traces on representative hardware, including a slow parser and a noisy background session.             |
 | Local browser/transport policy     | HTTP localhost packaged origin and authenticated loopback WebSocket                            | Actual secure-context, Origin, CSP, mixed-content, authentication, and lease-retirement tests.                         |
-| Shutdown guarantee                 | Measured blocking teardown for the initial alpha                                               | An explicit asynchronous engine lifecycle before promising a bounded host shutdown.                                    |
+| Shutdown guarantee                 | Measured blocking teardown with a process-exit watchdog                                        | An explicit asynchronous engine lifecycle before promising a bounded host shutdown.                                    |
+| Desktop-service transport          | Native bridge specified here; two cheaper options compared in ADR 0001                         | The native-service inventory and the origin and connection probe.                                                      |
+| Toolchain scope                    | Workspace flags scoped to this project's crates, proposed in ADR 0002                          | Build time, peak memory, and pin-bump cost for both arrangements.                                                      |
+| Session survival on host loss      | Backend outside the engine process; sessions destroyed on abnormal loss                        | The maintainer's choice between destruction and a bounded reattachment period; fault-injection results.                |
+| Process-wide accelerated-pane cap  | None; each document's pool applies its own cap                                                 | Context-exhaustion behaviour at one, two, and ten windows.                                                             |
+| Browser profile persistence        | One persistent profile                                                                         | Whether the frontend stores anything in cookies or web storage; an ephemeral profile removes the migration hazards.    |
+| Engine patch-latency budget        | Undeclared                                                                                     | Timed carry rehearsals and the maintainer's declared limit.                                                            |
 
 These decisions have named tests or ownership requirements. None requires\
 inventing an application migration deadline or assuming an upstream\
@@ -1639,31 +2037,48 @@ interface will be accepted unchanged.
 
 ## Validation status
 
-This proposal derives from current primary documentation and source\
-inspection at the cited revisions. The accompanying API sketch describes\
-proposed contracts; it is not a compiled implementation. The conformance\
-manifest describes acceptance work, not passed tests. No Servo/Tauri build,\
-application compatibility run, exploit demonstration, or performance\
-benchmark formed part of this design task.
+The November review checked source contracts at the October baselines. Tauri's
+runtime handle and dispatchers require `Send + Sync`, while its native webview
+type only requires `'static`. The native IPC handler receives a detached view
+and an HTTP request with a string body. Servo's public webview contains
+thread-local shared state and accepts JavaScript evaluation against a webview.
+These interfaces support owner-thread access through a dispatcher. Privileged
+completion still requires engine-side identification of the intended document
+when the operation executes. [Tauri runtime][pinned-runtime-contracts],
+[Tauri webview contract][tauri-webview-contract],
+[Servo webview][servo-webview].
+
+The pinned Velocetty package declares Electron and xterm version ranges. Its
+lockfile supplies the actual workload versions. The Verso manifest and fork pin
+establish historical integration precedent. Tauri's runtime guide describes
+custom-runtime packaging. These sources support the choice of fixtures and the
+need for a Servo-specific packaging inventory.
+[Velocetty manifest][package-manifest],
+[Velocetty lockfile][locked-dependencies], [Verso manifest][verso-manifest],
+[Tauri runtime guide][runtime-guide].
+
+A second pass on 26 November 2026 re-read every cited source at its pin and
+compared Servo 0.8.0, Servo main of 25 November, and the Tauri `v3` head of 24
+November. It confirmed the pinned-source claims in this document. It corrected
+the 0.8.0 toolchain, the description of the experimental-feature switch, the
+scope of the sandbox exclusion, and the account of Velocetty's backend script.
+It added the long-term support line, per-revision preference hazards, further
+interception defects, the removal of xterm's Canvas renderer upstream, the
+published crate of the same name, and the state of upstream embedding
+proposals. Three items rest on source reading alone and need an experiment:
+secure-context and loopback WebSocket behaviour from the packaged origin, the
+three inferred interception behaviours, and whether the pinned releases
+reproduce the reported WebGL2 terminal failure.
+
+The repository contains the runtime scaffold. Source inspection leaves the host
+build, two-window launch, document delivery, packaging, and terminal
+performance gates open. Each release claim needs a conformance result tied to
+the tested revisions and target.
 
 ## Glossary
 
-| Term             | Meaning in this design                                                                                     |
-| ---------------- | ---------------------------------------------------------------------------------------------------------- |
-| Runtime          | The adapter implementing Tauri's window, webview, event, and dispatch contracts.                           |
-| Engine host      | The component owning Servo, native surfaces, input translation, and engine lifecycle.                      |
-| Native window    | An operating-system window with its own lifetime and presentation surface.                                 |
-| Webview          | A Servo browsing context hosted by the runtime; initially one per application window.                      |
-| Frame            | A browsing context within a webview, distinct from the document currently loaded in it.                    |
-| Document token   | An opaque native reference to one engine document identity; never a frontend-supplied ID.                  |
-| Backend lease    | A backend-side authorization lifetime associated with a host document generation and its connections.      |
-| Browser profile  | Engine storage, credentials, cookies, and related browsing state for the application.                      |
-| Terminal profile | Velocetty's backend-owned shell, environment, working-directory, and terminal configuration.               |
-| PTY              | A pseudo-terminal connecting a terminal frontend to a shell or another interactive process.                |
-| Invoke           | A Tauri frontend-to-Rust command request, separate from Velocetty's backend service protocol.              |
-| Virtual origin   | A reserved HTTP(S) origin served inside the engine's normal fetch pipeline without a network asset server. |
-| Admission        | Acceptance of work into a bounded runtime queue; it does not establish successful execution.               |
-| Conformance gate | A set of required behavioural results for a declared compatibility profile and target.                     |
+The [context document](context.md) is the glossary for this design, the
+roadmap, and the conformance gates.
 
 ## References
 
@@ -1805,3 +2220,20 @@ this document are design decisions.
 [fetch-implementation]: https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/net/fetch/methods.rs
 [http-loader]: https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/net/http_loader.rs
 [manifest-detection]: https://github.com/tauri-apps/tauri/blob/78f49ba3993fed5a1b921235c547731006ad2a74/crates/tauri-cli/src/interface/rust/manifest.rs
+
+[tauri-webview-contract]: https://github.com/tauri-apps/tauri/blob/78f49ba3993fed5a1b921235c547731006ad2a74/crates/tauri-runtime/src/webview.rs
+[servo-webview]: https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/servo/webview.rs
+[verso-manifest]: https://github.com/versotile-org/tauri-runtime-verso/blob/dc1c1bfeadf65f3f4e38a4a3c6c960a70b749337/Cargo.toml
+
+[velocetty-november]: https://github.com/leynos/velocetty/blob/6078e4ee51f527d248c45bc967cf65b694d71e71/package.json
+[velocetty-pool]: https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/lib/utils/webgl-context-pool.ts
+[servo-webgl2]: https://github.com/servo/servo/issues/41394
+[servo-xterm]: https://github.com/servo/servo/issues/30822
+[xterm-6]: https://github.com/xtermjs/xterm.js/releases/tag/6.0.0
+[tauri-v3]: https://github.com/tauri-apps/tauri/tree/v3
+[copse-runtime]: https://github.com/copse-dev/tauri-runtime-servo
+[wry-servo]: https://github.com/tauri-apps/wry/pull/1797
+[servo-lts]: https://book.servo.org/embedding/lts-release.html
+[servo-september]: https://servo.org/blog/2026/11/05/september-in-servo/
+[servo-message-ports]: https://github.com/servo/servo/pull/40513
+[servo-messaging-issue]: https://github.com/servo/servo/issues/35665
