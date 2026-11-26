@@ -30,14 +30,19 @@ before extending the adapter.
   Servo revision, host revision, features, patches, and compiler in a manifest.
   - See [Tauri baseline][tauri] and [Servo baseline][servo].
   - Success: a clean build resolves the recorded graph and launches an inert
-    native window on the named machine. Compare Servo 0.7.0 with 0.8.0 or a
-    newer candidate on the same target. Record API gaps and patch costs.
+    native window on the named machine. Compare the Servo 0.7.0 control with
+    0.8.0 and the 0.6 support line on the same target, and advance the Tauri
+    pin to the alpha.6 set. Record API gaps and patch costs. Check the engine
+    preference profile against each revision's preference table.
 - [ ] 1.1.2. Record the maintenance decision for each required upstream change.
   - Requires 1.1.1. See [required engine and core work][core].
   - Success: the human maintainer accepts the downstream upkeep for a patch or
     records the upstream dependency and the feature it blocks. If the
     required upkeep exceeds available capacity, keep Electron as the product
-    host and retain the inert Servo harness.
+    host and retain the inert Servo harness. Record the audit of the
+    published in-process runtime, the choice to reuse, collaborate, or
+    proceed independently, and the crate's publishable name.
+  - See [related runtimes][related].
 - [ ] 1.1.3. Define the release evidence record and capture a reference run.
   - Requires 1.1.1. See [measured acceptance evidence][metrics].
   - Success: the record identifies hardware, driver, build mode, fonts, input
@@ -59,10 +64,13 @@ unusable rendering or input stops here pending a measured remedy.
   - Requires 1.1.1. See [application boundaries][app] and [stage P][p].
   - Success: the fixture renders known cells, selection, and scroll position
     without privileged IPC, Node imports, or a live PTY.
-- [ ] 2.1.2. Exercise WebGL2 and Canvas with the locked addons on a native GPU.
+- [ ] 2.1.2. Exercise WebGL2, Canvas, and the DOM renderer with the locked
+      addons on a native GPU.
   - Requires 2.1.1. See [terminal engine gate][graphics].
   - Success: record rendering mode and recovery time from context loss to a
     usable terminal, including hidden panes, Unicode, and transparency.
+    State whether the build reproduces the publicly reported WebGL2 failure
+    of rendering, focus, and text input. Record ligature support as observed.
 - [ ] 2.1.3. Capture interactive input and assistive-technology results.
   - Requires 2.1.1. See [input and native desktop behaviour][input].
   - Success: native IME composition and shortcut sequences yield the expected
@@ -80,7 +88,9 @@ while the product implementation is pending.
     exit, and disconnect. An uncertain input write is never replayed.
 - [ ] 2.2.2. Qualify parser credits and control traffic under sustained output.
   - Requires 2.2.1. See [binary service and flow control][flow].
-  - Success: a stalled parser stops credit return, pending bytes plateau,
+  - Success: the fixture returns credit from xterm's write-completion
+    callback, which the pinned frontend does not yet use. A stalled parser
+    stops credit return, pending bytes plateau,
     and a developer can switch between concurrent agent sessions, type in the
     newly focused pane, and close it while another session floods output.
     The fixture checks the destination session and exact input bytes.
@@ -92,7 +102,8 @@ background output, and what does it cost when switching tabs? Compare the same
 browser-safe frontend under Electron/Chromium and Servo. A single pane isolates
 renderer cost before the reference workspace introduces contention.
 
-- [ ] 2.3.1. Capture single-pane Canvas and WebGL2 controls on each host.
+- [ ] 2.3.1. Capture single-pane Canvas, WebGL2, and DOM renderer controls on
+      each host.
   - Requires 1.1.3 and 2.1.2. See [terminal engine gate][graphics].
   - Success: replay the same timed byte trace on a native GPU with locked
     xterm.js and addon versions, fonts, viewport, scrollback, and build mode.
@@ -106,6 +117,8 @@ renderer cost before the reference workspace introduces contention.
     test cap of two, verify least-recently-visible eviction and preservation
     of terminal contents. Repeat with the default cap of sixteen and record
     actual addon disposal and context-loss recovery alongside slot counts.
+    Slots release on hide, so expect no eviction at the default cap unless
+    more than sixteen panes are visible; record that observation.
 - [ ] 2.3.3. Compare Canvas-only and pooled rendering on the reference
       workspace.
   - Requires 2.2.2 and 2.3.2. See [measured acceptance evidence][metrics].
@@ -113,6 +126,10 @@ renderer cost before the reference workspace introduces contention.
     (28 and 42 sessions). Switch tabs and type while background agents stream
     output. Check focus, input destination, terminal contents, and scrollback
     in each mode. Run idle and noisy traces separately on both hosts.
+    The workspace is a fixture of this project: Velocetty has not yet
+    implemented tab decoration, so the fixture supplies it. Hidden panes use
+    Canvas in both modes, so the modes differ only in the visible panes.
+    Report the hidden-pane cost separately from the visible-pane difference.
   - Publish repeated-run counts, warm-up policy, p50/p95 key-to-visible-echo
     and tab-switch-to-readable-frame times, CPU, process-tree memory, and GPU
     memory where observable. Record unsupported cases and measurement gaps.
@@ -148,10 +165,11 @@ failure of presentation or re-entrancy blocks qualification on that host.
   - Requires 2.3.3 and 3.1.2. See [stage H][h].
   - Success: record queue and GPU peaks, latency, and idle CPU for one, two,
     and ten windows, including a stalled hidden pane. Repeat the 14-tab
-    benchmark with the tabbed settings window open, change a setting, and
-    verify focus and echo latency after returning to the shell. Agree
-    admission limits
-    and product budgets or narrow the supported profile.
+    benchmark with a second native window open on the settings tab, change a
+    setting, and verify focus and echo latency after returning to the shell.
+    Velocetty presents settings as a tab type, so the second window is an
+    ordinary workspace window. Agree admission limits and product budgets or
+    narrow the supported profile.
 
 ## 4. A document can use desktop services safely
 
@@ -299,6 +317,7 @@ contract can be verified.
 [flow]: tauri-runtime-servo-design.md#preserve-the-binary-service-design-and-add-real-flow-control
 [windows]: tauri-runtime-servo-design.md#native-windows-and-rendering
 [verso]: tauri-runtime-servo-design.md#what-to-carry-forward-from-verso
+[related]: tauri-runtime-servo-design.md#related-in-process-servo-runtimes
 [loop]: tauri-runtime-servo-design.md#ownership-and-event-loop-contract
 [failure]: tauri-runtime-servo-design.md#failure-and-shutdown-semantics
 [h]: tauri-runtime-servo-design.md#stage-h-host-proof

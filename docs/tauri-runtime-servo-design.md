@@ -3,6 +3,7 @@
 **Status:** Proposed architecture; no implementation or compatibility claim.
 
 **Source baseline:** 29 October 2026. **Design review:** 25 November 2026.
+**Source validation:** 26 November 2026.
 
 **Audience:** Runtime implementers, application developers evaluating the\
 backend, and reviewers of the Servo and Tauri integration boundaries.
@@ -124,11 +125,21 @@ planned work. The frontend still contains Electron and Node dependencies.\
 [roadmap](https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/docs/roadmap.md).
 
 At the November comparison revision, Velocetty's manifest declares Electron
-`^45.2.1`, xterm `^5.3.0`, and a `build:backend` script. The older fixture
-declares Electron `^44.4.1`. Keep the October lockfile for reproducible
-comparisons. Qualify a newer product revision with the same terminal workload
-and an end-to-end backend session before promoting it.
+`^45.2.1` (Chromium 156) and xterm `^5.3.0`. The older fixture declares Electron
+`^44.4.1` (Chromium 152). Both revisions carry a `build:backend` script, which
+only type-checks a placeholder package: neither revision contains a backend
+service, and the product roadmap's protocol, service-shell, Rust PTY, and Tauri
+items remain open. No commit between the two revisions touches the transport,
+terminal renderer, context pool, or session batcher. Keep the October lockfile
+for reproducible comparisons. Qualify a newer product revision with the same
+terminal workload and an end-to-end backend session before promoting it.
 [November Velocetty manifest][velocetty-november].
+
+Velocetty's own design names “the Tauri webview” without selecting a Tauri
+major version or a web engine, and does not mention Servo. Targeting Tauri 3
+and Servo is therefore a decision of this project that the product has yet to
+adopt. The [terms of reference](terms-of-reference.md) record it as an
+assumption for the maintainer to confirm.
 
 The product's technical design specifies that both the local Tauri\
 frontend and remote browser frontend use the same protobuf/WebSocket\
@@ -181,7 +192,17 @@ separate WebGL addon/context. The runtime must not add another terminal\
 pool or map each pane to a native view. Test aggregate GPU pressure with\
 multiple application windows, since each document's pool does not prove\
 a process-wide memory bound.
-[Terminal rendering and allocation](https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/lib/components/term.tsx).
+[Terminal rendering](https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/lib/components/term.tsx),
+[context pool][velocetty-pool].
+
+A pane releases its slot when it stops being visible, and every hidden pane
+runs the Canvas renderer. Least-recently-visible eviction therefore occurs only
+when the visible panes outnumber the cap, which the default of sixteen rarely
+permits. A workspace with many tabs is mostly Canvas renderers in every
+configuration; the accelerated and Canvas-only configurations differ only in
+the visible panes. The pane-visibility check also calls
+`document.elementFromPoint` and `getBoundingClientRect`, so hit-testing
+correctness in Servo is part of the terminal gate.
 
 ### Make the actual xterm stack the first engine gate
 
@@ -192,12 +213,43 @@ build does not establish the intended accelerated terminal path.\
 [Servo release preferences](https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/config/prefs.rs).
 
 Create a declared Velocetty engine profile that explicitly enables and\
-tests WebGL2 and, where correct, IntersectionObserver. Avoid the blanket\
-experimental-feature switch. A preference proves that an API can be\
+tests WebGL2 and, where correct, IntersectionObserver. Set each preference\
+individually. The blanket experimental-feature switch is a servoshell\
+command-line flag backed by a shell-private list; libservo offers no\
+equivalent, and the list enables unrelated features. A preference proves\
+that an API can be\
 requested; it does not prove shader, atlas, context-loss, or platform\
 driver compatibility. If a target cannot pass the accelerated path,\
 qualify a clearly identified Canvas mode against the actual workload\
 before treating it as an acceptable product mode.
+
+Declare the profile per engine revision. Servo panics on an unknown preference
+name, and names change between releases: 0.8.0 removed `layout_grid_enabled`
+and renamed four layout preferences, and main removed
+`dom_resize_observer_enabled` on 20 November 2026. Validate the profile against
+the pinned revision's preference table at build time. Confirm that the chosen
+Cargo feature set compiles WebGL at all; the `webgl` feature belongs to the
+crate's web-feature group and should be checked against the selected default
+features.
+[Servo experimental features](https://book.servo.org/design-documentation/experimental-features.html).
+
+Treat accelerated rendering as unproved. WebGL2 remains disabled by default at
+0.7.0, 0.8.0, and current main, with open gaps tracked upstream. A public
+report against the xterm.js demonstration describes working WebGL2 output in
+January 2025 and broken rendering, focus, and text input in December 2025, with
+no recorded resolution. Whether the pinned releases reproduce that failure is
+the first question for the terminal gate. xterm's WebGL renderer also
+rasterizes glyphs through a 2D canvas, so slow 2D canvas operations affect the
+accelerated path. IntersectionObserver is partial upstream and marked as a 1.0
+blocker. [WebGL2 tracking][servo-webgl2], [xterm.js on Servo][servo-xterm].
+
+The Canvas fallback has no upstream future. xterm.js 5.4.0 deprecated the
+unscoped `xterm` packages, and 6.0.0 removed the Canvas renderer addon in
+favour of WebGL and the built-in DOM renderer. Qualifying the locked 5.3.0
+stack remains the right first experiment because it is the shipped workload.
+Measure the DOM renderer as a third mode in the same runs: it needs neither
+WebGL2 nor a 2D canvas, and it is the fallback Velocetty inherits on any later
+xterm upgrade. [xterm.js 6.0.0][xterm-6].
 
 Run the exact locked xterm/addon combination before upgrading it. Test\
 WebGL2 glyph atlases, fonts, fractional DPI, combining characters,\
@@ -212,10 +264,20 @@ those paths directly. A successful opaque WebGL terminal is not evidence\
 that transparent windows or ligatures work.
 [Terminal implementation](https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/lib/components/term.tsx).
 
+The locked ligatures addon (0.7.0) finds fonts through a Node module or the
+Local Font Access API. A browser-safe fixture in Servo has neither. Expect
+ligatures to be unsupported there until a host port supplies font data, and
+report that outcome explicitly.
+
 Hidden-pane Canvas fallback must preserve terminal state while avoiding\
 unnecessary painting. xterm's hidden-render optimization depends on\
 IntersectionObserver, so test the declared preference and its actual\
-behaviour. If it is unreliable, add an explicit application visibility\
+behaviour. Without the API, xterm 5.3.0 never pauses rendering, which wastes\
+work. An observer that reports a pane as hidden and then fails to report its\
+return would leave the renderer paused, which blanks a visible terminal;\
+test that case specifically. Both renderers also construct a\
+`ResizeObserver` unconditionally. If visibility reporting is unreliable, add\
+an explicit application visibility\
 adapter rather than assuming `display: none` eliminates browser work.\
 Test restoration from hidden/minimized state, font and DPI changes while\
 hidden, and release/reacquisition of WebGL contexts.\
@@ -236,7 +298,11 @@ text, candidate positioning, dead keys, AltGr, Ctrl/Alt combinations,\
 keybinding chords, paste, bracketed paste, focus changes, and terminal\
 search/palette interactions. Retain the command system's ownership of\
 shortcut resolution. Browser accelerators must not steal terminal input\
-that the application expects to receive.
+that the application expects to receive. xterm receives composition through\
+a hidden textarea, and an open Servo defect reports a spurious\
+`compositionupdate` when an input gains focus; include focus-only sequences\
+in the composition tests.
+[Servo composition defect](https://github.com/servo/servo/issues/49873).
 
 Check xterm's accessibility mode with actual screen readers, including\
 cursor movement, new output, focus announcements, and composition.\
@@ -284,7 +350,16 @@ according to the platform's supported mechanism. Use bounded frame sizes\
 and fair session scheduling so one noisy process cannot monopolize the\
 connection or the browser main thread. Give input, resize, close, and\
 control messages priority over bulk output. Browser `bufferedAmount`\
-alone is not an end-to-end consumption acknowledgement.
+alone is not an end-to-end consumption acknowledgement. In Servo it is not\
+a signal at all: the implementation resets the value to zero on the next\
+task because a background thread has already taken the bytes.
+
+Credit return is new frontend work. The pinned frontend calls
+`term.write(data)` without a completion callback. xterm also holds a hard-coded
+50 MB write buffer and discards data beyond it, so a missing credit scheme
+loses output silently under sustained load. Its flow-control guide recommends
+keeping the high watermark below 500 kB.
+[xterm.js flow control](https://xtermjs.org/docs/guides/flowcontrol/).
 
 The protocol sketch does not already specify all of these credit,\
 generation, cancellation, or uncertain-outcome rules. Add them when\
@@ -425,6 +500,22 @@ line. Its packages have different alpha version suffixes, so pin the\
 workspace source revision and lockfile rather than inventing a shared\
 version number.
 
+Version 3 development happens on the upstream `v3` branch. The newest
+pre-release set, published on 6 November 2026, comprises `tauri` 3.0.0-alpha.6,
+`tauri-runtime` alpha.5, and `tauri-runtime-cef` alpha.7. No beta, release
+candidate, or stabilization date has been published. Between the pin and the
+branch head of 24 November 2026, the `tauri-runtime` sources changed by one
+line and the invoke script, channel implementation, and command-line runtime
+detection did not change. Advancing the pin to the alpha.6 set is therefore
+expected to be cheap; confirm it in the first build task.
+
+Open upstream proposals touch the areas this design adapts. They would turn the
+channel fetch command into a capability-gated core plugin, make the channel
+type opaque, add asynchronous window builders with a re-entrancy guard, and
+stop the CEF runtime waiting on queued main-thread getters. Treat the channel
+route and the CEF dispatch precedent as moving targets, and re-read them
+whenever the pin moves. [Tauri v3 branch][tauri-v3].
+
 Tauri 3 moves runtime selection into a runtime crate and exposes\
 runtime-specific operations through extension traits. Its runtime URL\
 hook removes the earlier assumption that custom-scheme representation\
@@ -436,9 +527,14 @@ instruction. [Tauri migration guide][tauri-migration-guide],
 [runtime guide][runtime-guide],
 [pinned runtime contracts][pinned-runtime-contracts].
 
-Expose a configuration and selection type named\
-`tauri_runtime_servo::Servo`, and a concrete implementation type named\
-`ServoRuntime<T>`. The engine type remains `servo::Servo`. The intended\
+Expose a configuration and selection type named `Servo`, and a concrete\
+implementation type named `ServoRuntime<T>`. The engine type remains\
+`servo::Servo`. The crate path shown below is provisional. Another project\
+published `tauri-runtime-servo` 0.1.0 on crates.io on 24 August 2026, and\
+the registry treats hyphens and underscores as the same name, so this crate\
+cannot be published as `tauri_runtime_servo`. Choose a publishable name, or\
+agree a shared one with that project, before any public release; see\
+[related work](#related-in-process-servo-runtimes). The intended\
 application shape is:
 
 ```rust
@@ -454,6 +550,13 @@ Implement `Runtime`, `RuntimeHandle`, `WindowDispatch`,\
 `RuntimeInitAttrs` and conversion into `DynRuntimeInitAttrs`. Implement\
 runtime-specific extension traits for both the concrete runtime and\
 `DynRuntime`. Preserve the existing generic application/plugin model.
+
+The selection type must satisfy `Default + Send + Sync + 'static`. The runtime
+handle, both dispatchers, and the event-loop proxy must be `Send + Sync`, and a
+`with_webview` closure must be `Send` even though the value it receives need
+not be. The contract also requires a `webview_version` query and the DevTools
+methods regardless of feature selection, and passes GTK pointers as untyped raw
+pointers.
 
 At this revision, Tauri owns scoped event-listener registries. The runtime\
 emits the corresponding `RunEvent` values; it must not duplicate the old\
@@ -511,6 +614,31 @@ Retain applicable licence notices when copying isolated code. The\
 project should start with new architecture and contracts rather than a\
 renamed fork whose internal dependencies survive by accident.
 
+The Verso runtime has not changed since the audited revision of
+10 September 2026 and still targets Tauri 2.7. The original Verso repository
+was archived on 8 October 2025. A Tauri maintainer describes the runtime as
+outdated.
+
+### Related in-process Servo runtimes
+
+The design is not the first in-process attempt. The `copse-dev` project
+published a crate named `tauri-runtime-servo` in August 2026. It embeds
+libservo 0.5 in the application process, creates windows with Tao, targets
+Tauri 2.11, and replaces Tauri's invoke script to carry IPC. Its last commit
+dates from 21 September 2026 and it has no Tauri 3 port. It began as a Wry pull
+request; when closing that request, Tauri maintainers stated that an
+out-of-tree Servo runtime is their preferred direction because they lack the
+capacity to maintain one. No first-party Servo runtime was found.
+[copse-dev runtime][copse-runtime], [Wry discussion][wry-servo].
+
+| Related work                           | Disposition                                    | Reason                                                                                        |
+| -------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `copse-dev` window and engine hosting  | Audit before the host proof                    | It already hosts libservo in process and may answer surface and event-loop questions cheaply. |
+| `copse-dev` replacement invoke script  | Do not adopt                                   | A copied invoke script is the maintenance burden the transport-policy hook exists to avoid.   |
+| `copse-dev` request-body limitation    | Record as corroboration                        | It independently reports that interception omits request bodies.                              |
+| Published crate name                   | Resolve before any release                     | The registry name is taken; see [Tauri baseline](#tauri-baseline-and-compatibility-policy).   |
+| Collaboration with the existing author | Decide when recording the maintenance decision | Shared upkeep could reduce the patch burden; divergent Tauri majors and goals may prevent it. |
+
 ## Servo baseline, retained improvements, and required deltas
 
 ### Baseline and update policy
@@ -523,16 +651,34 @@ comparison snapshot of Servo main is
 complete dependency graph and record the patches with the runtime release; do
 not follow a moving branch in application builds. [S1][s1], [S2][s2]
 
-Servo published 0.8.0 after that baseline. At the first gate, compare its
-public embedding surface, compiler, patch burden, and native launch against the
-control. Record a maintainable patch target before committing to the host. Keep
-each result associated with the release actually tested.
+Servo published 0.8.0 on 9 November 2026 at commit
+`4e136d8ef31b7c4748fbfac606ca463f3efd7537`. It is the newest release. Its
+public embedding sources are identical to the comparison snapshot, so the
+snapshot findings in this document describe 0.8.0. It builds with Rust 1.99.1.
+At the first gate, compare its compiler, patch burden, and native launch
+against the control. Record a maintainable patch target before committing to
+the host. Keep each result associated with the release actually tested.
 [Servo 0.8.0 release](https://github.com/servo/servo/releases/tag/v0.8.0).
+
+Servo releases monthly and maintains a long-term support line. A new line opens
+every six months and receives security fixes only for an expected nine months,
+on a best-effort basis. The current line is 0.6, released on 29 September 2026.
+Its patch releases may carry Git dependencies and may not appear on crates.io.
+The 0.7.0 control is neither the current release nor a supported line, so it
+serves reproduction only. Choose the patch target between the current release
+and the 0.6 line. [Servo long-term support policy][servo-lts].
+
+Release 0.7.0 changed embedder contracts that the host must follow. It removed
+`WebView::set_throttled`, so throttling follows hide and show. It removed
+`notify_focus_changed` and `Servo::focus`/`blur`, so the embedder calls
+`WebView::set_focused`. It added `Servo::forward_accessibility_action`.
+Accessibility remains behind the `accessibility_enabled` preference.
+[September 2026 engine changes][servo-september].
 
 | Property                          | Inspected value                                         | Design consequence                                                 |
 | --------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
-| Release toolchain                 | Rust 1.97.1                                             | Use as the upstream control build.                                 |
-| Main toolchain                    | Rust 1.99.1                                             | A main-branch improvement may also require a toolchain update.     |
+| 0.7.0 toolchain                   | Rust 1.97.1                                             | Use as the upstream control build.                                 |
+| 0.8.0 and main toolchain          | Rust 1.99.1                                             | Adopting the current release also requires this compiler.          |
 | Main manifest MSRV                | Rust 1.88.0                                             | Distinguish declared MSRV from the release build toolchain.        |
 | Main rendering dependencies       | Surfman 0.14.0; WebRender 0.70.1; raw-window-handle 0.6 | Integrate through raw handles and the public rendering contract.   |
 | Main shell/example window library | Winit 0.30.13                                           | This does not require the runtime to use Servo's shell event loop. |
@@ -616,15 +762,32 @@ The public embedding surface and inspected implementations support this
 division. The proposed additions are design requirements, not existing Servo
 methods. [S4][s4], [S9][s9], [S10][s10], [S11][s11]
 
+The November validation found every listed gap still open at 0.7.0, the
+snapshot, 0.8.0, and main of 25 November 2026. Upstream activity is limited. A
+pull request adding bidirectional message ports to the embedding API has been
+open and awaiting a rebase since November 2025; its tracking issue last sought
+design feedback in June 2026, and reviewers noted that Servo has no isolated
+script worlds. A request for a Tauri-style bridge was closed as a duplicate of
+that issue. A pull request granting custom schemes a secure context was closed
+as stale in June 2026. No upstream work was found for document-start scripts,
+document-targeted evaluation, bounded shutdown, IndexedDB site data, or
+rendering-context replacement. Plan for a downstream patch series; do not plan
+around imminent upstream delivery. [Message-port proposal][servo-message-ports],
+[embedder messaging issue][servo-messaging-issue].
+
 #### Bootstrap and local-resource requirements
 
 Current user scripts run through `HTMLHeadElement::bind_to_tree`, which queues
 a task that executes when DOM script/layout safety blockers clear. This can run
 early during normal HTML parsing. It does not provide a universal
 document-created hook, a once-only guarantee, frame/origin selection, or an
-isolated execution world. The runtime needs a dedicated bootstrap contract
-instead of relying on head insertion timing.
-[S10](https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/script/dom/userscripts.rs)
+isolated execution world. `UserScript` accepts only a source and a file name,
+and manager updates take effect on the next reload. Scripts run in every frame,
+and an open defect reports that they panic the script thread in a sandboxed
+frame that disallows scripts. Embedder-originated JavaScript also runs
+regardless of the page's CSP or sandbox since 0.7.0. The runtime needs a
+dedicated bootstrap contract instead of relying on head insertion timing.
+[Sandboxed-frame defect](https://github.com/servo/servo/issues/48774). [S10](https://github.com/servo/servo/blob/aac43a3f31a259f04a574f5ec4e959c943ad7cc7/components/script/dom/userscripts.rs)
 
 For local resources, use exact reserved HTTP(S) origins and a provider inserted
 at the HTTP transport boundary before DNS/TLS. Velocetty's initial profile uses
@@ -643,22 +806,36 @@ experimentally demonstrated vulnerability. Interception also accumulates chunks
 through an unbounded channel until completion, so its chunk API does not
 establish streaming or backpressure. [S11][s11], [S12][s12]
 
+Four further properties rule interception out even as a stopgap for privileged
+IPC. The intercepted request carries no body and no frame or document identity,
+so it cannot serve a binary invoke or attribute its caller. An embedder
+response replaces a network error that a request-side CSP or mixed-content
+check has already set. Intercepted responses bypass the step that assigns
+response tainting, so a cross-origin response may be exposed as a basic one.
+The interceptor is held under one asynchronous lock across the embedder round
+trip, which appears to serialize every intercepted fetch. The last three are
+inferences from source order; each needs a test before the provider design
+relies on the opposite behaviour.
+
 Custom protocols remain useful, but registering one does not establish a
-standard tuple origin. `ProtocolHandler::is_secure` documents only
-mixed-content treatment, and Servo's origin model delegates to the URL library.
-Implementing comprehensive custom-scheme origin semantics would touch more
-engine subsystems than a virtual HTTP(S) transport.
+standard tuple origin. A non-special scheme receives an opaque origin.
+`ProtocolHandler::is_secure` documents only mixed-content treatment; the
+secure-context check consults URL trustworthiness and never the protocol
+registry. Servo's origin model delegates to the URL library. Implementing
+comprehensive custom-scheme origin semantics would touch more engine subsystems
+than a virtual HTTP(S) transport.
 [S13](https://github.com/servo/servo/blob/69911d3671ff2c75fc0d12d2553718b16956a2b1/components/net/protocols/mod.rs)
 
 ### Lifecycle and platform limits
 
 Keep one `Servo` instance on the UI thread. Its handles use `Rc`;
-process-global options use a `OnceLock` that rejects a second initialization.
-Preferences also remain global. Public `spin_event_loop()` returns `()`. Final
-`ServoInner` drop sends shutdown and synchronously pumps until completion.
-Cancel runtime work, release webview/delegate references, and preserve surface
-lifetimes before allowing that final drop. Do not promise in-process recovery
-by rebuilding Servo after failure.
+process-global options use a `OnceLock`, and a second initialization panics; it
+does not return an error. Preferences also remain global. Public
+`spin_event_loop()` returns `()`. Final `ServoInner` drop sends shutdown and
+synchronously pumps until completion, with no timeout. Cancel runtime work,
+release webview/delegate references, and preserve surface lifetimes before
+allowing that final drop. Do not promise in-process recovery by rebuilding
+Servo after failure.
 [S9](https://github.com/servo/servo/blob/69911d3671ff2c75fc0d12d2553718b16956a2b1/components/servo/servo.rs)
 
 Rendering currently requires OpenGL/GLES methods. Attach refresh scheduling
@@ -675,9 +852,10 @@ can panic. Profile selection is engine-wide, and the public site-data
 categories omit IndexedDB. Finally, multiprocess compilation, process
 separation, and OS sandboxing are distinct: runtime multiprocess/sandbox
 options default to false, and current sandbox activation explicitly rejects
-Windows, ARM/aarch64, Android, iOS, RISC-V, and OHOS targets.
-Supported-platform claims must reflect these limits. [S9][s9], [S14][s14],
-[S15][s15]
+Windows, ARM/aarch64, Android, iOS, RISC-V, and OHOS targets. The aarch64
+exclusion covers Apple Silicon, so the sandbox is unavailable on current Mac
+hardware as well as on Windows. Supported-platform claims must reflect these
+limits. [S9][s9], [S14][s14], [S15][s15]
 
 Additional baseline references: [main manifest][main-manifest],
 [main toolchain][main-toolchain], [global options][global-options],
@@ -1284,9 +1462,12 @@ restart. Stop an incompatible downgrade before opening the profile for writes.
 Track Servo security updates independently of feature work. Keep engine\
 changes as a small, documented patch series with one purpose per patch\
 and upstream tracking where appropriate. Rebase through the conformance\
-suite. Compare a current monthly release with an LTS option when their\
-required embedding contracts match; do not freeze an obsolete engine\
-merely to avoid adapter maintenance.
+suite. Compare a current monthly release with the long-term support line\
+when their required embedding contracts match; do not freeze an obsolete\
+engine merely to avoid adapter maintenance. A support line receives\
+best-effort security fixes for about nine months and may depend on Git\
+sources, so following it still means a rebase at least twice a year and a\
+dependency policy that admits pinned Git revisions.
 
 Servo's current contribution policy excludes LLM-generated code,\
 documentation, issues, and comments, with an exception for minimized test
@@ -1445,7 +1626,11 @@ and context-pool transitions, context loss/recovery, font metrics, Unicode,
 selection, keyboard modifiers, IME, and screen-reader behaviour. Exercise
 several xterm panes inside one document; these panes do not require native
 child webviews. Test image, search, link, and ligature addons only with their
-declared support policy, reporting unsupported features explicitly.
+declared support policy, reporting unsupported features explicitly. Run the DOM
+renderer as a third mode alongside WebGL2 and Canvas. Verify
+`document.elementFromPoint` and `getBoundingClientRect` against the pane
+occlusion check, `createImageBitmap` for the Canvas and image addons, and 2D
+canvas text measurement for the glyph atlas.
 
 Start with recorded output and a controlled server, then test the planned
 protobuf/WebSocket service on the existing Node backend before replacing its
@@ -1692,8 +1877,9 @@ the following choices with evidence rather than implicit fallbacks.
 
 | Decision                           | Initial position                                                                               | Evidence required to finalize it                                                                                       |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Exact Servo/Tauri/host release set | Servo 0.7.0 control, 0.8.0 comparison, pinned Tauri 3 and `tauri-winit` sources                | Build and native launch on each claimed target; dependency and ABI reconciliation.                                     |
-| Terminal graphics profile          | Explicit WebGL2 and IntersectionObserver settings; tested Canvas fallback                      | Locked xterm corpus, context-loss recovery, native input/accessibility, and measured resource budgets.                 |
+| Exact Servo/Tauri/host release set | Servo 0.7.0 control; patch target chosen between 0.8.0 and the 0.6 support line; Tauri alpha.6 | Build and native launch on each claimed target; dependency and ABI reconciliation.                                     |
+| Published crate name               | Provisional `tauri_runtime_servo`; the registry name belongs to another project                | A publishable name, or an agreement with the existing author, recorded before any public release.                      |
+| Terminal graphics profile          | Per-revision WebGL2 and IntersectionObserver settings; Canvas and DOM renderer fallbacks       | Locked xterm corpus, context-loss recovery, native input/accessibility, and measured resource budgets.                 |
 | Privilege API delivery             | Public engine bootstrap, source identity, exact-document delivery, and normal-policy resources | Agreed API shape or maintained downstream patch ownership; negative tests at each boundary.                            |
 | Product native-service subset      | Implement the operations selected by Velocetty's host ports                                    | Inventory every direct Electron/Node dependency and chosen Tauri plugin; reject undeclared requirements before launch. |
 | Queue and performance budgets      | Bounded queues with conservative configurable defaults                                         | Actual terminal traces on representative hardware, including a slow parser and a noisy background session.             |
@@ -1725,6 +1911,19 @@ need for a Servo-specific packaging inventory.
 [Velocetty manifest][package-manifest],
 [Velocetty lockfile][locked-dependencies], [Verso manifest][verso-manifest],
 [Tauri runtime guide][runtime-guide].
+
+A second pass on 26 November 2026 re-read every cited source at its pin and
+compared Servo 0.8.0, Servo main of 25 November, and the Tauri `v3` head of 24
+November. It confirmed the pinned-source claims in this document. It corrected
+the 0.8.0 toolchain, the description of the experimental-feature switch, the
+scope of the sandbox exclusion, and the account of Velocetty's backend script.
+It added the long-term support line, per-revision preference hazards, further
+interception defects, the removal of xterm's Canvas renderer upstream, the
+published crate of the same name, and the state of upstream embedding
+proposals. Three items rest on source reading alone and need an experiment:
+secure-context and loopback WebSocket behaviour from the packaged origin, the
+three inferred interception behaviours, and whether the pinned releases
+reproduce the reported WebGL2 terminal failure.
 
 The repository contains the runtime scaffold. Source inspection leaves the host
 build, two-window launch, document delivery, packaging, and terminal
@@ -1896,3 +2095,14 @@ this document are design decisions.
 [verso-manifest]: https://github.com/versotile-org/tauri-runtime-verso/blob/dc1c1bfeadf65f3f4e38a4a3c6c960a70b749337/Cargo.toml
 
 [velocetty-november]: https://github.com/leynos/velocetty/blob/6078e4ee51f527d248c45bc967cf65b694d71e71/package.json
+[velocetty-pool]: https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/lib/utils/webgl-context-pool.ts
+[servo-webgl2]: https://github.com/servo/servo/issues/41394
+[servo-xterm]: https://github.com/servo/servo/issues/30822
+[xterm-6]: https://github.com/xtermjs/xterm.js/releases/tag/6.0.0
+[tauri-v3]: https://github.com/tauri-apps/tauri/tree/v3
+[copse-runtime]: https://github.com/copse-dev/tauri-runtime-servo
+[wry-servo]: https://github.com/tauri-apps/wry/pull/1797
+[servo-lts]: https://book.servo.org/embedding/lts-release.html
+[servo-september]: https://servo.org/blog/2026/11/05/september-in-servo/
+[servo-message-ports]: https://github.com/servo/servo/pull/40513
+[servo-messaging-issue]: https://github.com/servo/servo/issues/35665

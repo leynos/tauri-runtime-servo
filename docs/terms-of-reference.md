@@ -1,6 +1,6 @@
 # Tauri Servo runtime — terms of reference
 
-**Status:** Draft v0.1, 25 November 2026. **Audience:** the df12 Productions
+**Status:** Draft v0.2, 26 November 2026. **Audience:** the df12 Productions
 maintainer and agent workshop.
 
 The [context document](context.md) defines the domain vocabulary. The
@@ -36,6 +36,14 @@ separate application qualification before a deployment claim. Verso provides
 prior integration experience. Its existence alone establishes neither current
 Velocetty compatibility nor a reason to replace the current host.
 [Runtime comparisons](tauri-runtime-servo-design.md#what-to-carry-forward-from-verso).
+
+Another project has already published an in-process Servo runtime for Tauri 2
+under the crate name this repository uses. Auditing or collaborating with it is
+an alternative to building every host component afresh, and its existence means
+this crate needs a different published name. Tauri's maintainers have said they
+prefer a Servo runtime to live outside their repository, so no first-party
+option is expected.
+[Related runtimes](tauri-runtime-servo-design.md#related-in-process-servo-runtimes).
 
 The df12 Productions development team consists of one human maintainer and the
 agent workshop. Product direction, Velocetty integration, and release approval
@@ -94,10 +102,26 @@ representative hardware with the same application revision, fonts, terminal
 traces, and workload. If those conditions differ, record the differences and
 repeat the measurement before attributing a regression to the host.
 
+Velocetty will accept a Tauri 3 pre-release and Servo as its desktop host. Its
+own design names a Tauri webview without choosing a Tauri version or an engine,
+and its backend service, shared protocol, and Tauri packaging have not started.
+Tauri 3 has no published stabilization date. The maintainer confirms or revises
+this assumption when choosing the first target.
+
+The locked terminal stack is the right first workload. Its Canvas fallback was
+removed from later xterm.js releases, and no public evidence shows the
+accelerated renderer working in a current Servo release. The first terminal
+experiment tests both points before further investment.
+
 **Dependent on others.** A privileged release depends on sustainable delivery
 of required upstream interfaces or a maintained downstream patch series.
-Acceptance by either upstream project is an open dependency. The maintenance
-budget, available capacity, and delivery dates remain open.
+Acceptance by either upstream project is an open dependency. As of
+26 November 2026, none of the required Servo interfaces exists in a release or
+on the main branch, and the one relevant upstream proposal has been idle for a
+year. Servo's contribution policy excludes generated code, so the workshop
+cannot submit its patches upstream. A downstream patch series is the working
+assumption. The maintenance budget, available capacity, and delivery dates
+remain open.
 
 ## Open decisions
 
@@ -107,6 +131,7 @@ budget, available capacity, and delivery dates remain open.
 | Which regressions can users accept?                    | The maintainer approves latency, resource, and failure thresholds against measured Electron workloads.                                      | Promotion from prototype to product.        |
 | Which downstream patches can the team sustain?         | The maintainer records available capacity, patch scope, and an update route. Rehearse an engine update and recovery on the declared target. | Distribution to users.                      |
 | What would justify wider investment?                   | The maintainer specifies an adoption or maintenance-cost criterion beyond the first application decision.                                   | Expansion beyond the reference application. |
+| Under which name is the crate published?               | The maintainer chooses a free registry name or agrees a shared one with the existing project's author.                                      | Any public release.                         |
 
 These questions permit prototype work. Before approving distribution, the
 maintainer selects the target, sets acceptance thresholds, and accepts the
@@ -114,6 +139,8 @@ ongoing patch burden. A durable change to the reference application or the
 support boundary warrants an architectural decision record.
 
 The reference application sources above use the pinned revision reviewed on
-25 November 2026.
+25 November 2026. The external claims were revalidated on 26 November 2026; the
+design's [validation status](tauri-runtime-servo-design.md#validation-status)
+records the result.
 
 [migration]: https://github.com/leynos/velocetty/blob/40949b2f4b266d8523d6ffe680f1dbc53ad9b541/docs/velocetty-design.md#host-migration-electron-to-tauri
