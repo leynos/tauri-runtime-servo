@@ -27,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@ab6505246c6b043b742a225e428e00448c0a37af
+        uses: leynos/shared-actions/.github/actions/setup-rust@bd052c68a4792e92c3272fb1b6ea3b594f3ab7f3
         with:
           rustflags: -Zpolonius=next
           # mold accelerates dev builds; coverage uses lld for llvm-tools compatibility.
@@ -58,7 +58,7 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@12d13f90bc3a5a1971bebad4beb09a4dfa962e91
       - name: Install the YAML lint tools
-        uses: leynos/shared-actions/.github/actions/install-yaml-lint@ab6505246c6b043b742a225e428e00448c0a37af
+        uses: leynos/shared-actions/.github/actions/install-yaml-lint@bd052c68a4792e92c3272fb1b6ea3b594f3ab7f3
       # The checker is the shared CV-005 rules, pinned in the Makefile; it
       # proves the pull-request lane never reaches CodeScene and that only the
       # publisher uploads and advances the ratchet baseline.
@@ -116,7 +116,7 @@ jobs:
           echo "Coverage CFLAGS: -fuse-ld=lld"
           echo "Coverage LDFLAGS: -fuse-ld=lld"
       - name: Test and Measure Coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@ab6505246c6b043b742a225e428e00448c0a37af
+        uses: leynos/shared-actions/.github/actions/generate-coverage@bd052c68a4792e92c3272fb1b6ea3b594f3ab7f3
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
           RUSTFLAGS: -Zpolonius=next -C link-arg=-fuse-ld=lld
