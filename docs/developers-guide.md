@@ -107,10 +107,20 @@ compiler as the build.
 
 `make test-workflow-contracts` runs the pinned shared CV-005 checker over the
 repository. The selection and output policy live in `.github/cv005.toml`, which
-Copier renders from the repository answer. The checker runs through
-`uv tool run` from the shared-actions revision pinned in the Makefile, so do
-not copy the rules into this repository. `make all` includes the target; run it
-directly after changing a workflow.
+Copier renders from the repository answer. The checker runs through the vendored
+`scripts/uv_gate.py` helper (`uv_gate tool`, offline first, which needs
+`python3` 3.9 or newer on `PATH`) from the shared-actions revision pinned in
+the Makefile, so do not copy the rules into this repository. `make all`
+includes the target; run it directly after changing a workflow.
+
+The helper finds `uv` on the cleaned `PATH` (outside `~/.lody`), uses the
+global uv cache and runs offline first with at most one online attempt; there
+is no `UV` override, and `UV_GATE_ALLOW_ONLINE=0` forbids the online step. It
+was verified here with uv 0.13.7, which names the offline reason for a cold
+cache. A `uv` that reports only `Git operation failed` for a Git source missing
+from the cache is not retried online: warm the cache once with `uv tool run` on
+that source. `scripts/uv_gate.py` is the shared-actions helper copied byte for
+byte: update it by copying the canonical file, never by editing it.
 
 Rendered `ci.yml` declares a workflow-level concurrency group keyed on the
 workflow and the pull-request number, falling back to the run ID, with
